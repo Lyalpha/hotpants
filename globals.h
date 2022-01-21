@@ -53,6 +53,7 @@ float     outBzero, outBscale, outNiBzero, outNiBscale;
 int       convolveVariance;
 int       usePCA, fwKernelPCA;
 float     **PCA;
+int       nThread;
 
 /* GLOBAL VARS NOT SET ON COMMAND LINE */
 int       ngauss, *deg_fixe;

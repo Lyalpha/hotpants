@@ -79,3 +79,4 @@
 #define D_VERBOSE       1       /* levels of verbosity, 0, 1, 2 */
 #define D_CONVVAR       0       /* instead of convolving noise, convolve variance.  ker vs ker**2 */
 #define D_USEPCA        0       /* use input basis functions for kernel; derived from PCA */
+#define D_NTHREAD       1       /* number of threads to use for calculating regions - will be limited to nrx*nry */

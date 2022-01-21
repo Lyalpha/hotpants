@@ -127,6 +127,8 @@ void vargs(int argc, char *argv[]) {
     convolveVariance = D_CONVVAR;
     usePCA = D_USEPCA;
 
+    nThread = D_NTHREAD;
+
     sprintf(help, "Usage:  hotpants [options]\n");
 
     sprintf(help, "%sVersion %s\n", help, version);
@@ -249,7 +251,9 @@ void vargs(int argc, char *argv[]) {
     sprintf(help, "%s                     : k?.fits = name of fitsfile holding basis function\n", help);
     sprintf(help, "%s                     : Since this uses input basis functions, it will fix :\n", help);
     sprintf(help, "%s                     :    hwKernel \n", help);
-    sprintf(help, "%s                     :    \n", help);
+    sprintf(help, "%s                     :    \\nn", help);
+
+    sprintf(help, "%s   [-nt numthread]   : number of threads to use (%d) - this will be limited to nrx*nry\n\n", help, D_NTHREAD);
 
     sprintf(help, "%s   [-v] verbosity    : level of verbosity, 0-2 (%d)\n", help, verbose);
 
@@ -473,7 +477,8 @@ void vargs(int argc, char *argv[]) {
                     deg_fixe[i] = 0;
                     sigma_gauss[i] = -1;
                 }
-
+            } else if (strcasecmp(argv[iarg] + 1, "nt") == 0) {
+                sscanf(argv[++iarg], "%d", &nThread);
             } else {
                 fprintf(stderr, "Unknown option : %s\n", argv[iarg]);
                 exit(1);
