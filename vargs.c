@@ -434,11 +434,20 @@ void vargs(int argc, char *argv[]) {
         exit(1);
     }
 
+    /* we need at least one thread */
+    if (nThread < 1) {
+        nThread = 1;
+        fprintf(stderr, "Found invalid number of threads - nt set to %d\n", nThread);
+    }
     /* can only use threads if cfitsio was compiled to be thread safe */
-    // TODO Only raise if nThread > 1 - this relies on making main.c not use threads if nThread = 1
-    if ((fits_is_reentrant() != 1)) {
-        fprintf(stderr, "FATAL ERROR cfitsio was not compiled to be thread-safe (requires the `--enable-reentrant` argument on configuration)\n");
+    if ((fits_is_reentrant() != 1) && nThread > 1) {
+        fprintf(stderr, "FATAL ERROR nt (%d) : number of threads > 1 and cfitsio not compiled to be thread-safe (requires the `--enable-reentrant` argument on configuration)\n", nThread);
         exit(1);
+    }
+    /* no point having more threads than regions */
+    if (nThread > nRegX * nRegY) {
+        nThread = nRegX * nRegY;
+        fprintf(stderr, "Limiting number of threads to equal the number of regions - set nt to %d\n", nThread);
     }
 
     /* template thresholds and gain */

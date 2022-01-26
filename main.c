@@ -10,6 +10,7 @@
 #include "defaults.h"
 #include "globals.h"
 #include "functions.h"
+#include "thpool.h"
 
 /* locks for the threads so we don't try to concurrently write to fits files */
 pthread_mutex_t writelock = PTHREAD_MUTEX_INITIALIZER;
@@ -20,14 +21,12 @@ int xMin, yMin, xMax, yMax;
 long tNaxes[MAXDIM];
 long iNaxes[MAXDIM];
 long oNaxes[MAXDIM];
-int tBitpix, tNaxis;
-int iBitpix, iNaxis;
-int oBitpix, oNaxis;
+int tNaxis, iNaxis;
 int rXMin, rYMin, rXMax, rYMax;
 int kInfoNum;
 };
 
-void* processRegion(void *voidData) {
+void processRegion(void *voidData) {
 
     struct RegionData *regData = voidData;
     int i = regData->regNum;
@@ -551,21 +550,17 @@ void* processRegion(void *voidData) {
         }
         status = 0;
 
-        /* no stamps at all? */
-        /* FIXME We are not in a region loop here - is it ok to just return here if these conditions met? */
+        /* no stamps at all? Things will probably go wrong after here */
         if ((niS == 0) && (ntS == 0)) {
             fprintf(stderr, "[Region %d] No stamps found!", i);
-            return 0;
         }
         if (strncmp(forceConvolve, "i", 1) == 0)
             if (niS == 0) {
                 fprintf(stderr, "[Region %d] No image stamps found!", i);
-                return 0;
             }
         if (strncmp(forceConvolve, "t", 1) == 0)
             if (ntS == 0) {
                 fprintf(stderr, "[Region %d] No template stamps found!", i);
-                return 0;
             }
 
         /*
@@ -1954,23 +1949,8 @@ int main(int argc, char *argv[]) {
         loadxyfile(sstampFile, cmpFile);
     }
 
-    /* limit number of threads to number of regions */
-    if (nThread > nR) {
-        fprintf(stderr, "Limiting number of threads to number of regions (%d)\n", nR);
-        nThread = nR;
-    }
-
-    /* set up threads */
-//    FIXME allow for nThread < nR. For now add this:
-    nThread = nR;
-
-    pthread_t thread[nThread];
-
-    struct RegionData regData[nThread];
-//    int regPerThread=(nR+nThread-1)/nThread;
-    for (i=0; i<nThread; i++) {
-//        regData[i].regNumStart=i*regPerThread;
-//        regData[i].regNumStop=(i+1)*regPerThread;
+    struct RegionData regData[nR];
+    for (i=0; i<nR; i++) {
         regData[i].regNum=i;
         regData[i].nR=nR;
         regData[i].xMin=xMin;
@@ -1989,21 +1969,25 @@ int main(int argc, char *argv[]) {
         regData[i].rXMax = rXMaxs[i];
         regData[i].rYMax = rYMaxs[i];
         regData[i].kInfoNum=kInfoNum;
-        /* TODO What if nThread != nR - need to pass regPerThread to each thread? */
     }
 
-    /* ensure last thread does not try to process a non-existant region */
-//    regData[nThread - 1].stop=nR;
-    /* start the threads and wait for them to complete */
-
-    for (i=0; i<nThread; i++) {
-        pthread_create(&thread[i], NULL, processRegion, &regData[i]);
+    if (nThread == 1) {
+        /* iterate over regions inside main thread */
+        for (i = 0; i < nR; i++) {
+            processRegion(&regData[i]);
+        }
+    } else {
+        /* set up thread pool */
+        threadpool thpool = thpool_init(nThread);
+        /* add work for the threads */
+        for (i = 0; i < nR; i++) {
+            thpool_add_work(thpool, processRegion,  &regData[i]);
+        }
+        /* wait for them to complete */
+        thpool_wait(thpool);
+        /* destroy the pool */
+        thpool_destroy(thpool);
     }
-
-    for (i=0; i<nThread; i++) {
-        pthread_join(thread[i], NULL);
-    }
-
 
     /* add fits header info */
     fits_movabs_hdu(oPtr, 1, NULL, &status);
