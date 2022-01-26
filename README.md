@@ -1,7 +1,22 @@
+### This fork
+
+This fork is a multi-threaded version of the [original hotpants](https://github.com/acbecker/hotpants).
+
+* Threading is done on a per-region basis, so it requires that `nrx > 1` and/or `nry > 1`.
+* At most `nrx * nry` thread can be spawned.
+* To use threading `cfitsio` library must be configured and compiled with the `--enable--reentrant` setting - see `cfitsio` docs.
+* You should get an almost `nrx*nry` speed up, from testing. This seems to hold even for relatively small size images or regions.
+
+Addiionally:
+* `-sconv` and `-gd` arguments have been removed. (So too has `-pca`, but this didn't work anyway.)
+* The `extractkern` module has been removed.
+
+
+
 hotpants
 ========
 
-Import of v5.1.11 of High Order Transform of Psf ANd Template Subtraction code (hotpants).
+High Order Transform of Psf ANd Template Subtraction code (hotpants).
 
 Note on usage: Your mileage will vary based on the configuration of the software.  The most important tuning parameter is the size of the gaussians that you use.  A good rule of thumb is, asssuming you have measured the widths of the Psfs in the science and template image:
 
