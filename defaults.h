@@ -1,6 +1,3 @@
-#define D  if (1);
-#define DD if (0);
-
 #define FLAG_BAD_PIXVAL         0x01   /* 1 */
 #define FLAG_SAT_PIXEL          0x02   /* 2 */
 #define FLAG_LOW_PIXEL          0x04   /* 4 */
@@ -30,9 +27,7 @@
 #define D_DEG_GAUSS3  2       
 #define D_SIG_GAUSS1  0.7     
 #define D_SIG_GAUSS2  1.5     
-#define D_SIG_GAUSS3  3.0     
-#define STAT_SAMP     10        /* desired number of stamp stat squares in x,y */
-
+#define D_SIG_GAUSS3  3.0
 
 #define D_UTHRESH       25000.  /* assumed upper valid data */
 #define D_LTHRESH       0.      /* assumed lower valid data */
@@ -63,7 +58,6 @@
 #define D_NORMALIZE     "t"     /* output image on template phot system */
 #define D_CONVOLVE      "b"     /* try both ways by default */
 #define D_FIGMERIT      "v"     /* (v)ariance, (s)igma based or (h)istogram based method to direct convolution */
-#define D_SAMECONV      0       /* convolve the entire image in same dir?  will check 1st region and then fix */
 #define D_FILL          1.e-30  /* value put on masked pixels */
 #define D_FILLNOISE     0       /* value put on masked pixels in noise image */
 #define D_NOILAYER      0       /* add pure noise image as output image layer */
@@ -78,4 +72,4 @@
 #define D_SAVEXY        0       /* armin stuff : save xy location of stamps */
 #define D_VERBOSE       1       /* levels of verbosity, 0, 1, 2 */
 #define D_CONVVAR       0       /* instead of convolving noise, convolve variance.  ker vs ker**2 */
-#define D_USEPCA        0       /* use input basis functions for kernel; derived from PCA */
+#define D_NTHREAD       1       /* number of threads to use for calculating regions - will be limited to nrx*nry */

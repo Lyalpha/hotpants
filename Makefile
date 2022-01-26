@@ -27,8 +27,8 @@ LIBDIR        =  ../../cfitsio/lib
 
 # standard usage
 # recently added -std=c99 after a bug report
-COPTS = -funroll-loops -O3 -ansi -std=c99 -pedantic-errors -Wall -I$(CFITSIOINCDIR) -D_GNU_SOURCE
-LIBS  = -L$(LIBDIR) -lm -lcfitsio
+COPTS = -funroll-loops -O3 -ansi -std=c99 -pedantic-errors -Wall -I$(CFITSIOINCDIR) -D_GNU_SOURCE -fcommon -g
+LIBS  = -lpthread -L$(LIBDIR) -lm -lcfitsio
 
 # compiler
 CC    = gcc 
@@ -40,10 +40,10 @@ CC    = gcc
 # SOMEPLACE AFTER THEY ARE BUILT eg. hotpants
 #
 
-STDH  = functions.h globals.h defaults.h
-ALL   = main.o vargs.o alard.o functions.o 
+STDH  = functions.h globals.h defaults.h thpool.h
+ALL   = main.o vargs.o alard.o functions.o thpool.o
 
-all:	hotpants extractkern maskim
+all:	hotpants maskim
 
 hotpants: $(ALL)
 	$(CC) $(ALL) -o hotpants $(LIBS) $(COPTS)
@@ -61,11 +61,8 @@ functions.o: $(STDH) functions.c
 vargs.o: $(STDH) vargs.c
 	$(CC) $(COPTS)  -c vargs.c
 
-extractkern : extractkern.o 
-	$(CC) extractkern.o -o extractkern $(LIBS) $(COPTS)
-
-extractkern.o : $(STDH) extractkern.c
-	$(CC) $(COPTS)  -c extractkern.c
+thpool.o: $(STDH) thpool.c
+	$(CC) $(COPTS)  -c thpool.c
 
 maskim : maskim.o
 	$(CC) maskim.o -o maskim $(LIBS) $(COPTS)

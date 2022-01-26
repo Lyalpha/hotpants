@@ -1,7 +1,22 @@
+### This fork
+
+This fork is a multi-threaded version of the [original hotpants](https://github.com/acbecker/hotpants).
+
+* Threading is done on a per-region basis, so it requires that `nrx > 1` and/or `nry > 1`.
+* At most `nrx * nry` thread can be spawned.
+* To use threading `cfitsio` library must be configured and compiled with the `--enable--reentrant` setting - see `cfitsio` docs.
+* You should get an almost `nrx*nry` speed up, from testing. This seems to hold even for relatively small size images or regions.
+
+Addiionally:
+* `-sconv` and `-gd` arguments have been removed. (So too has `-pca`, but this didn't work anyway.)
+* The `extractkern` module has been removed.
+
+
+
 hotpants
 ========
 
-Import of v5.1.11 of High Order Transform of Psf ANd Template Subtraction code (hotpants).
+High Order Transform of Psf ANd Template Subtraction code (hotpants).
 
 Note on usage: Your mileage will vary based on the configuration of the software.  The most important tuning parameter is the size of the gaussians that you use.  A good rule of thumb is, asssuming you have measured the widths of the Psfs in the science and template image:
 
@@ -53,8 +68,6 @@ Additional options:
    [-mins spread]    : Fraction of kernel half width to spread input mask (1.0)
    [-mous spread]    : Ditto output mask, negative = no diffim masking (1.0)
    [-omi  fitsfile]  : Output bad pixel mask (undef)
-   [-gd xmin xmax ymin ymax]
-                     : only use subsection of full image (full image)
 
    [-nrx xregion]    : number of image regions in x dimension (1)
    [-nry yregion]    : number of image regions in y dimension (1)
@@ -78,7 +91,6 @@ Additional options:
    [-c  toconvolve]  : force convolution on (t)emplate or (i)mage (undef)
    [-n  normalize]   : normalize to (t)emplate, (i)mage, or (u)nconvolved (t)
    [-fom figmerit]   : (v)ariance, (s)igma or (h)istogram convolution merit (v)
-   [-sconv]          : all regions convolved in same direction (0)
    [-ko kernelorder] : spatial order of kernel variation within region (2)
    [-bgo bgorder]    : spatial order of background variation within region (1)
    [-ssig statsig]   : threshold for sigma clipping statistics  (3.0)
@@ -120,12 +132,8 @@ Additional options:
                      : N = 0 .. ngauss - 1
 
                      : (3 6 0.70 4 1.50 2 3.00
-   [-pca nk k0.fits ... n(k-1).fits]
-                     : nk      = number of input basis functions
-                     : k?.fits = name of fitsfile holding basis function
-                     : Since this uses input basis functions, it will fix :
-                     :    hwKernel 
-                     :    
+   [-nt numthread]   : number of threads to use (1) - this will be limited to nrx*nry
+
    [-v] verbosity    : level of verbosity, 0-2 (1)
  NOTE: Fits header params will be added to the difference image
        COMMAND             (what was called on the command line)
