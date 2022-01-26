@@ -64,7 +64,7 @@ void loadxyfile(char *filename, int cmpfileflag) {
 }
 
 /*armin*/
-void savexy(stamp_struct *stamps, int nStamps, long xmin, long ymin, int regioncounter) {
+void savexy(stamp_struct *stamps, int _nStamps, long xmin, long ymin, int regioncounter) {
     int sscnt, istamp;
     FILE *xyfileused, *xyfileall, *xyfileskipped;
     char xyfilenameall[1000];
@@ -88,7 +88,7 @@ void savexy(stamp_struct *stamps, int nStamps, long xmin, long ymin, int regionc
     fprintf(xyfileskipped, "#%4s %4s\n", "X", "Y");
 
     /* note single pixel offset for ds9 display compared to 0-index array */
-    for (istamp = 0; istamp < nStamps; istamp++) {
+    for (istamp = 0; istamp < _nStamps; istamp++) {
         for (sscnt = 0; sscnt < stamps[istamp].nss; sscnt++) {
             /*fprintf(xyfileall,        " %4ld %4ld\n", stamps[istamp].xss[sscnt] + xmin, stamps[istamp].yss[sscnt] + ymin);*/
             fprintf(xyfileall, "image;box(%4ld,%4ld,%d,%d) # color=yellow\n",
@@ -114,14 +114,14 @@ void savexy(stamp_struct *stamps, int nStamps, long xmin, long ymin, int regionc
     fclose(xyfileused);
 }
 
-int allocateStamps(stamp_struct *stamps, int nStamps) {
+int allocateStamps(stamp_struct *stamps, int _nStamps) {
     int i, j;
     int nbgVectors;
 
     nbgVectors = ((bgOrder + 1) * (bgOrder + 2)) / 2;
 
     if (stamps) {
-        for (i = 0; i < nStamps; i++) {
+        for (i = 0; i < _nStamps; i++) {
 
             /* **************************** */
             if (!(stamps[i].vectors = (double **) calloc((nCompKer + nbgVectors), sizeof(double *))))
@@ -178,7 +178,7 @@ int allocateStamps(stamp_struct *stamps, int nStamps) {
 
 void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
                  int getCenters, int rXBMin, int rYBMin, stamp_struct *ciStamps, stamp_struct *ctStamps,
-                 float *iRData, float *tRData, float hardX, float hardY) {
+                 float *iRData, float *tRData, float hardX, float hardY, int *mRData, int rPixX, int rPixY) {
 
     int sPixX, sPixY;
     int xmax, ymax, k, l, nr2;
@@ -208,7 +208,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
             if (!(getStampStats3(refArea, ctStamps[*ntS].x0, ctStamps[*ntS].y0, sPixX, sPixY,
                                  &ctStamps[*ntS].sum, &ctStamps[*ntS].mean, &ctStamps[*ntS].median,
                                  &ctStamps[*ntS].mode, &ctStamps[*ntS].sd, &ctStamps[*ntS].fwhm,
-                                 &ctStamps[*ntS].lfwhm, 0x0, 0xffff, 3))) {
+                                 &ctStamps[*ntS].lfwhm, 0x0, 0xffff, 3, mRData, rPixX, rPixY))) {
                 /* pointless */
                 if (verbose >= 1)
                     fprintf(stderr, "    Tmpl  xs : %4i ys : %4i  (sky,dsky = %.1f,%.1f)\n",
@@ -230,7 +230,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
             if (!(getStampStats3(refArea, ciStamps[*niS].x0, ciStamps[*niS].y0, sPixX, sPixY,
                                  &ciStamps[*niS].sum, &ciStamps[*niS].mean, &ciStamps[*niS].median,
                                  &ciStamps[*niS].mode, &ciStamps[*niS].sd, &ciStamps[*niS].fwhm,
-                                 &ciStamps[*niS].lfwhm, 0x0, 0xffff, 3))) {
+                                 &ciStamps[*niS].lfwhm, 0x0, 0xffff, 3, mRData, rPixX, rPixY))) {
 
                 /* pointless */
                 /* buildSigMask(&ciStamps[*niS], sPixX, sPixY, misRData); */
@@ -246,7 +246,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
         nss = ctStamps[*ntS].nss;
         if (getCenters) {
             /* get potential centers for the kernel fit */
-            getPsfCenters(&ctStamps[*ntS], tRData, sPixX, sPixY, tUKThresh, bbitt1, bbitt2);
+            getPsfCenters(&ctStamps[*ntS], tRData, sPixX, sPixY, tUKThresh, bbitt1, bbitt2, mRData, rPixX, rPixY);
             if (verbose >= 1)
                 fprintf(stderr, "    Tmpl     : scnt = %2i nss = %2i\n",
                         ctStamps[*ntS].sscnt, ctStamps[*ntS].nss);
@@ -268,7 +268,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
                 check = checkPsfCenter(tRData, xmax - ctStamps[*ntS].x0, ymax - ctStamps[*ntS].y0, sPixX, sPixY,
                                        ctStamps[*ntS].x0, ctStamps[*ntS].y0, tUKThresh,
                                        ctStamps[*ntS].mode, 1. / ctStamps[*ntS].fwhm,
-                                       0, 0, bbitt1 | bbitt2 | 0xbf, bbitt1);
+                                       0, 0, bbitt1 | bbitt2 | 0xbf, bbitt1, mRData, rPixX, rPixY);
 
                 /* its ok? */
                 if (check != 0.) {
@@ -300,7 +300,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
 
         if (getCenters) {
             /* get potential centers for the kernel fit */
-            getPsfCenters(&ciStamps[*niS], iRData, sPixX, sPixY, iUKThresh, bbiti1, bbiti2);
+            getPsfCenters(&ciStamps[*niS], iRData, sPixX, sPixY, iUKThresh, bbiti1, bbiti2, mRData, rPixX, rPixY);
             if (verbose >= 1)
                 fprintf(stderr, "    Image    : scnt = %2i nss = %2i\n",
                         ciStamps[*niS].sscnt, ciStamps[*niS].nss);
@@ -320,7 +320,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
                 check = checkPsfCenter(iRData, xmax - ciStamps[*niS].x0, ymax - ciStamps[*niS].y0, sPixX, sPixY,
                                        ciStamps[*niS].x0, ciStamps[*niS].y0, iUKThresh,
                                        ciStamps[*niS].mode, 1. / ciStamps[*niS].fwhm,
-                                       0, 0, bbiti1 | bbiti2 | 0xbf, bbiti1);
+                                       0, 0, bbiti1 | bbiti2 | 0xbf, bbiti1, mRData, rPixX, rPixY);
 
                 /* its ok? */
                 if (check != 0.) {
@@ -379,7 +379,7 @@ void cutStamp(float *data, float *refArea, int dxLen, int xMin, int yMin,
     return;
 }
 
-int cutSStamp(stamp_struct *stamp, float *iData) {
+int cutSStamp(stamp_struct *stamp, float *iData, int *mRData, int rPixX, int rPixY) {
     /*****************************************************
      * NOTE: The Centers here are in the regions' coords
      *    To grab them from the stamp, adjust using stamp->x0,y0
@@ -437,7 +437,7 @@ int cutSStamp(stamp_struct *stamp, float *iData) {
 double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
                       int sx0, int sy0,
                       double hiThresh, float sky, float invdsky,
-                      int xbuffer, int ybuffer, int bbit, int bbit1) {
+                      int xbuffer, int ybuffer, int bbit, int bbit1, int *mRData, int rPixX, int rPixY) {
 
     /* note the imax and jmax are in the stamp coordinate system */
 
@@ -493,7 +493,7 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
     return dmax2;
 }
 
-int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double hiThresh, int bbit1, int bbit2) {
+int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double hiThresh, int bbit1, int bbit2, int *mRData, int rPixX, int rPixY) {
     /*****************************************************
      * Find the X highest independent maxima in the stamp
      *   Subject to some stringent cuts
@@ -629,7 +629,7 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
                        this!  well, sum of high sigma pixels anyways...*/
 
                     dmax2 = checkPsfCenter(iData, imax, jmax, xLen, yLen, sx0, sy0,
-                                           hiThresh, sky, invdsky, xbuffer, ybuffer, bbit, bbit1);
+                                           hiThresh, sky, invdsky, xbuffer, ybuffer, bbit, bbit1, mRData, rPixX, rPixY);
 
                     if (dmax2 == 0.)
                         continue; /* continue i loop */
@@ -708,7 +708,7 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
 }
 
 
-void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int umask, int smask) {
+void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int umask, int smask, int *mRData, int rPixX, int rPixY) {
     /*
       good pixels : umask=0,      smask=0xffff
       ok   pixels : umask=0xff,   smask=0x8000
@@ -755,7 +755,7 @@ int getStampStats3(float *data,
                    int x0Reg, int y0Reg, int nPixX, int nPixY,
                    double *sum, double *mean, double *median,
                    double *mode, double *sd, double *fwhm, double *lfwhm,
-                   int umask, int smask, int maxiter) {
+                   int umask, int smask, int maxiter, int *mRData, int rPixX, int rPixY) {
     /*****************************************************
      * Given an input image, return stats on the pixel distribution
      *    This should be a masked distribution
@@ -772,7 +772,7 @@ int getStampStats3(float *data,
 
     extern int flcomp();
 
-    double bin1, binsize, maxdens, moden;
+    double bin1, binsize, maxdens;
     double sumx, sumxx, isd;
     double lower, upper, mode_bin, rdat;
     int mdat, npts;
@@ -973,7 +973,6 @@ int getStampStats3(float *data,
         for (i = 0, sumx = 0.; i < imax; sumx += bins[i++]);
         sumx += bins[imax] * (mode_bin - imax); /*interpolate fractional bin*/
         sumx /= goodcnt;
-        moden = sumx;
 
         /* find the region around mode containing half the "noise" points,
            e.g. assume that the mode is 50th percentile of the noise */
@@ -1095,53 +1094,14 @@ int sigma_clip(float *data, int count, double *mean, double *stdev, int maxiter)
     return 0;
 }
 
-float *calculateAvgNoise(float *image, int *mask, int nx, int ny, int size, int maskval, int doavg) {
-    /* if avg = 0, take stdev of pixel values (e.g in diffim) */
-    /* if avg = 1, take mean of pixel values (e.g in noiseim)   */
-    int i, j, ii, jj, cnt;
-    float *data, *outim;
-    double mean, stdev;
 
-
-    if (!(data = (float *) calloc(size * size, sizeof(float))))
-        return (NULL);
-    if (!(outim = (float *) calloc(nx * ny, sizeof(float))))
-        return (NULL);
-
-    for (j = ny; j--;) {
-        for (i = nx; i--;) {
-
-            /* take your average! */
-            cnt = 0;
-            for (jj = j - size; jj <= j + size; jj++) {
-                if ((jj < 0) || jj >= ny)
-                    continue;
-
-                for (ii = i - size; ii <= i + size; ii++) {
-                    if ((ii < 0) || ii >= nx)
-                        continue;
-
-                    if (!(mask[ii + jj * nx] & maskval))
-                        data[cnt++] = image[ii + jj * nx];
-                }
-            }
-            /* we'll do no clipping */
-            sigma_clip(data, cnt, &mean, &stdev, 0);
-            outim[i + j * nx] = doavg ? mean : stdev;
-        }
-    }
-    free(data);
-    return outim;
-}
-
-
-void freeStampMem(stamp_struct *stamps, int nStamps) {
+void freeStampMem(stamp_struct *stamps, int _nStamps) {
     /*****************************************************
      * Free ctStamps allocation when ciStamps are used, vice versa
      *****************************************************/
     int i, j;
     if (stamps) {
-        for (i = 0; i < nStamps; i++) {
+        for (i = 0; i < _nStamps; i++) {
             for (j = 0; j < nCompKer + nBGVectors; j++)
                 if (stamps[i].vectors[j]) free(stamps[i].vectors[j]);
             if (stamps[i].vectors) free(stamps[i].vectors);
@@ -1158,21 +1118,16 @@ void freeStampMem(stamp_struct *stamps, int nStamps) {
     }
 }
 
-float *makeNoiseImage4(float *iData, float invGain, float quad) {
+void makeNoiseImage4(float *nData, float *iData, float invGain, float quad, int rPixX, int rPixY) {
 
     int i;
     double qquad;
-    float *nData = NULL;
-
-    if (!(nData = (float *) calloc(rPixX * rPixY, sizeof(float))))
-        return NULL;
 
     qquad = quad * quad;
 
     for (i = rPixX * rPixY; i--;)
         nData[i] = fabs(iData[i]) * invGain + qquad;
 
-    return nData;
 }
 
 void getKernelInfo(char *kimage) {
@@ -1338,7 +1293,7 @@ void fits_get_kernel_btbl(fitsfile *kPtr, double **kernelSol, int nRegion) {
 }
 
 
-void spreadMask(int *mData, int width) {
+void spreadMask(int *mData, int width, int rPixX, int rPixY) {
     /*****************************************************/
     /* spread mask by width size in all directions */
     /* it works, but is it too inefficient? */
@@ -1373,7 +1328,7 @@ void spreadMask(int *mData, int width) {
     return;
 }
 
-void makeInputMask(float *tData, float *iData, int *mData) {
+void makeInputMask(float *tData, float *iData, int *mData, int rPixX, int rPixY) {
     /*****************************************************/
     /* Construct input mask image, expand by fwKernel  */
     /*****************************************************/
@@ -1386,7 +1341,7 @@ void makeInputMask(float *tData, float *iData, int *mData) {
         mData[i] |= (FLAG_INPUT_ISBAD | FLAG_LOW_PIXEL) * (tData[i] <= tLThresh || iData[i] <= iLThresh);
     }
 
-    spreadMask(mData, (int) (hwKernel * kfSpreadMask1));
+    spreadMask(mData, (int) (hwKernel * kfSpreadMask1), rPixX, rPixY);
 
     /* mask has value 0 for good pixels in the difference image */
     return;
@@ -1417,7 +1372,7 @@ int hp_fits_copy_header(fitsfile *iPtr, fitsfile *oPtr, int *status) {
     return *status;
 }
 
-void hp_fits_correct_data(float *data, int npix, float bZero, float bScale, int makeShort) {
+void hp_fits_correct_data(float *data, int npix, float bZero, float bScale, int makeShort, int *mRData) {
 
     float maxval = 1e30, minval = -1e30;
     int i;
@@ -1463,7 +1418,7 @@ void hp_fits_correct_data(float *data, int npix, float bZero, float bScale, int 
     return;
 }
 
-void hp_fits_correct_data_int(int *data, int npix, float bZero, float bScale, int makeShort) {
+void hp_fits_correct_data_int(int *data, int npix, float bZero, float bScale, int makeShort, int *mRData) {
 
     float maxval = 1e30, minval = -1e30;
     int i;
@@ -1501,15 +1456,14 @@ void hp_fits_correct_data_int(int *data, int npix, float bZero, float bScale, in
 int hp_fits_write_subset(fitsfile *fptr, long group, long naxis, long *naxes,
                          float *data, int *status, int makeShort,
                          float bZero, float bScale,
-                         int fpixelX, int fpixelY, int lpixelX, int lpixelY, int xArrayLo, int yArrayLo) {
+                         int fpixelX, int fpixelY, int lpixelX, int lpixelY, int xArrayLo, int yArrayLo, int *mRData, int rPixX, int rPixY) {
 
-    int pixX, pixY, y, x;
+    int pixY, y, x;
     float *dptr;
     long fpixel[2], lpixel[2];
 
-    hp_fits_correct_data(data, (rPixX * rPixY), bZero, bScale, makeShort);
+    hp_fits_correct_data(data, (rPixX * rPixY), bZero, bScale, makeShort, mRData);
 
-    pixX = lpixelX - fpixelX + 1;
     pixY = lpixelY - fpixelY + 1;
 
     fpixel[0] = fpixelX;
@@ -1540,15 +1494,14 @@ int hp_fits_write_subset(fitsfile *fptr, long group, long naxis, long *naxes,
 int hp_fits_write_subset_int(fitsfile *fptr, long group, long naxis, long *naxes,
                              int *data, int *status, int makeShort,
                              float bZero, float bScale,
-                             int fpixelX, int fpixelY, int lpixelX, int lpixelY, int xArrayLo, int yArrayLo) {
+                             int fpixelX, int fpixelY, int lpixelX, int lpixelY, int xArrayLo, int yArrayLo, int *mRData, int rPixX, int rPixY) {
 
-    int pixX, pixY, y, x;
+    int pixY, y, x;
     int *dptr;
     long fpixel[2], lpixel[2];
 
-    hp_fits_correct_data_int(data, (rPixX * rPixY), bZero, bScale, makeShort);
+    hp_fits_correct_data_int(data, (rPixX * rPixY), bZero, bScale, makeShort, mRData);
 
-    pixX = lpixelX - fpixelX + 1;
     pixY = lpixelY - fpixelY + 1;
 
     fpixel[0] = fpixelX;

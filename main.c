@@ -11,6 +11,9 @@
 #include "globals.h"
 #include "functions.h"
 
+/* locks for the threads so we don't try to concurrently write to fits files */
+pthread_mutex_t writelock = PTHREAD_MUTEX_INITIALIZER;
+
 struct RegionData {
 int regNum, nR;
 int xMin, yMin, xMax, yMax;
@@ -20,14 +23,12 @@ long oNaxes[MAXDIM];
 int tBitpix, tNaxis;
 int iBitpix, iNaxis;
 int oBitpix, oNaxis;
-int *rXMins, *rYMins, *rXMaxs, *rYMaxs;
 int rXMin, rYMin, rXMax, rYMax;
-int rXBMin, rYBMin, rXBMax, rYBMax;
 int kInfoNum;
-fitsfile *tPtr, *iPtr, *oPtr, *ePtr;
 };
 
 void* processRegion(void *voidData) {
+
     struct RegionData *regData = voidData;
     int i = regData->regNum;
     int nR = regData->nR;
@@ -43,45 +44,30 @@ void* processRegion(void *voidData) {
         iNaxes[ii] = regData->iNaxes[ii];
         oNaxes[ii] = regData->oNaxes[ii];
     }
-    int tBitpix = regData->tBitpix;
     int tNaxis = regData->tNaxis;
-    int iBitpix = regData->iBitpix;
     int iNaxis = regData->iNaxis;
-    int oBitpix = regData->oBitpix;
-    int oNaxis = regData->oNaxis;
-    int rXMins[nR];
-    int rYMins[nR];
-    int rXMaxs[nR];
-    int rYMaxs[nR];
-    for (int ii = 0; ii < nR; ii++) {
-        rXMins[ii] = regData->rXMins[ii];
-        rYMins[ii] = regData->rYMins[ii];
-        rXMaxs[ii] = regData->rXMaxs[ii];
-        rYMaxs[ii] = regData->rYMaxs[ii];
-    }
     int rXMin = regData->rXMin;
     int rYMin = regData->rYMin;
     int rXMax = regData->rXMax;
     int rYMax = regData->rYMax;
-    int rXBMin = regData->rXBMin;
-    int rYBMin = regData->rYBMin;
-    int rXBMax = regData->rXBMax;
-    int rYBMax = regData->rYBMax;
-    fitsfile *tPtr = regData->tPtr;
-    fitsfile *iPtr = regData->iPtr;
-    fitsfile *oPtr = regData->oPtr;
-    fitsfile *ePtr = regData->ePtr;
     int kInfoNum = regData->kInfoNum;
 
     int j, k, l, m;
+    int rXBMin, rYBMin, rXBMax, rYBMax;
+
 
     double sumKernel;                              /* photometric normalization */
     double meansigSubstamps, scatterSubstamps;      /* mean sigma and scatter of substamps, for fits header */
     double meansigSubstampsF, scatterSubstampsF;    /* mean sigma and scatter of substamps, using final noise */
-    double meanksumSubstamps, scatterksumSubstamps; /* mean and scatter of ksum */
     int NskippedSubstamps;                      /* Number of skipped substamps, for fits header */
 
     double diffrat;
+
+    /* fits pointers */
+    fitsfile *tPtr;
+    fitsfile *iPtr;
+    fitsfile *oPtr;
+    fitsfile *ePtr;
 
     /* template image */
     double *tKerSol = NULL;
@@ -98,21 +84,24 @@ void* processRegion(void *voidData) {
     /* output image */
     float *oRData = NULL;
 
-    /* extraneous image; eRData now defined in globals.h */
+    /* extraneous image */
     float *eRData = NULL;
 
     /* extraneous output regions */
     int *misRData = NULL;  /* image    mask */
     int *mtsRData = NULL;  /* template mask */
+    int *mRData = NULL;   /* bad input data mask */
 
     int xBufLo, xBufHi, yBufLo, yBufHi;     /* buffer */
 
     int sXMin, sYMin, sXMax, sYMax;         /* each stamp */
     int niS, ntS;                           /* stamp counter */
+    int nS;                              /* region stamp counter */
     int convTmpl;                           /* which way the convolution goes */
 
 
     int buffer_size;                        /* the buffer_size to use, depending on number of regions */
+    int       rPixX, rPixY;
 
     /* cfitsio */
     long pixMin[2], pixMax[2];
@@ -136,9 +125,37 @@ void* processRegion(void *voidData) {
     int flag;
     double inv1;
     int sBorder = hwKSStamp + hwKernel;
+    float *temp, *temp2;
+    int *indx;
 
+    /* kernel info */
+    double **check_mat = NULL, *check_vec = NULL;
+    double *check_stack = NULL, **wxy = NULL;
+    double *kernel_coeffs, *kernel, **kernel_vec;
+    double *filter_x, *filter_y;
 
-    /* process region */
+    /* malloc data structures */
+    fprintf(stderr, "Allocating memory\n");
+    if (!(temp = (float *) calloc((fwKSStamp + fwKernel) * fwKSStamp, sizeof(float))) ||
+        !(indx = (int *) calloc((nCompTotal + 1 + 100), sizeof(int))) ||
+
+        !(kernel = (double *) calloc(fwKernel * fwKernel, sizeof(double))) ||
+        !(kernel_coeffs = (double *) calloc(nCompKer, sizeof(double))) ||
+        !(kernel_vec = (double **) calloc(nCompKer, sizeof(double *))) ||
+        !(filter_x = (double *) calloc(nCompKer * fwKernel, sizeof(double))) ||
+        !(filter_y = (double *) calloc(nCompKer * fwKernel, sizeof(double))) ||
+
+        !(check_mat = (double **) calloc(nC, sizeof(double *))) ||
+        !(check_vec = (double *) calloc(nC, sizeof(double))) ||
+        !(check_stack = (double *) calloc(nStamps, sizeof(double)))) {
+        exit(1);
+    }
+    for (j = 0; j < nC; j++)
+        if (!(check_mat[j] = (double *) calloc(nC, sizeof(double)))) {
+        exit(1);
+    }
+
+    /* start processing  region */
     if (kernelImIn) {
         /* grab region info from kernelImIn */
         readKernel(kernelImIn, i, &tKerSol, &iKerSol, &rXMin, &rXMax, &rYMin, &rYMax,
@@ -146,10 +163,6 @@ void* processRegion(void *voidData) {
                    &meansigSubstampsF, &scatterSubstampsF,
                    &diffrat, &NskippedSubstamps);
     } else {
-        rXMin = rXMins[i];
-        rXMax = rXMaxs[i];
-        rYMin = rYMins[i];
-        rYMax = rYMaxs[i];
         meansigSubstamps = scatterSubstamps = 0.0;
         NskippedSubstamps = 0;
     }
@@ -203,9 +216,11 @@ void* processRegion(void *voidData) {
         fprintf(stderr, "[Region %d] Cannot Allocate Standard Data Arrays\n", i);
         exit(1);
     }
+
     /* set them to fillVal */
     fset(tRData, fillVal, rPixX, rPixY);
     fset(iRData, fillVal, rPixX, rPixY);
+
     /* set eRData and oRData to fillValNoise */
     fset(oRData, fillValNoise, rPixX, rPixY);
     fset(eRData, fillValNoise, rPixX, rPixY);
@@ -235,6 +250,7 @@ void* processRegion(void *voidData) {
             }
             tKerSol = (double *) calloc((nCompTotal + 1), sizeof(double));
         }
+
         if (!(strncmp(forceConvolve, "t", 1) == 0)) {
             if (!(ciStamps = (stamp_struct *) calloc(nStamps, sizeof(stamp_struct)))) {
                 printf("[Region %d] Cannot Allocate Stamp List\n", i);
@@ -248,9 +264,21 @@ void* processRegion(void *voidData) {
         }
     }
 
+    /* open up template */
+    if (fits_open_file(&tPtr, template, 0, &status))
+        printError(status);
+
+    /* open up comparison image */
+    if (fits_open_file(&iPtr, image, 0, &status))
+        printError(status);
+
     /* read image region from fits files into input arrays */
     if (fits_read_subset_flt(tPtr, 0, tNaxis, tNaxes, pixMin, pixMax, inc, 0, tRData, &anynul, &status) ||
         fits_read_subset_flt(iPtr, 0, iNaxis, iNaxes, pixMin, pixMax, inc, 0, iRData, &anynul, &status)) {
+        printError(status);
+    }
+    /* close unneeded files */
+    if (fits_close_file(iPtr, &status) || fits_close_file(tPtr, &status)) {
         printError(status);
     }
 
@@ -275,7 +303,7 @@ void* processRegion(void *voidData) {
         for (l = rPixX * rPixY; l--;)
             oRData[l] *= oRData[l];
     } else {
-        oRData = makeNoiseImage4(iRData, 1. / iGain, iRdnoise / iGain);
+        makeNoiseImage4(oRData, iRData, 1. / iGain, iRdnoise / iGain, rPixX, rPixY);
     }
 
     if (tNoiseIm) {
@@ -288,7 +316,7 @@ void* processRegion(void *voidData) {
         for (l = rPixX * rPixY; l--;)
             eRData[l] *= eRData[l];
     } else {
-        eRData = makeNoiseImage4(tRData, 1. / tGain, tRdnoise / tGain);
+        makeNoiseImage4(eRData, tRData, 1. / tGain, tRdnoise / tGain, rPixX, rPixY);
     }
 
     /* add noise portions, NOT SQRT HERE
@@ -332,7 +360,7 @@ void* processRegion(void *voidData) {
     }
 
     /* add own bits and spread */
-    makeInputMask(tRData, iRData, mRData);
+    makeInputMask(tRData, iRData, mRData, rPixX, rPixY);
 
     /* make sure program can't find a valid stamp center around the edge of the image */
     /* mask with 0x100 & 0x400 */
@@ -396,7 +424,7 @@ void* processRegion(void *voidData) {
 
                                 buildStamps(sXMin, sXMax, sYMin, sYMax, &niS, &ntS, 0, rXBMin, rYBMin,
                                             ciStamps, ctStamps, iRData, tRData,
-                                            xcmp[m] - rXBMin, ycmp[m] - rYBMin);
+                                            xcmp[m] - rXBMin, ycmp[m] - rYBMin, mRData, rPixX, rPixY);
 
                             }
                         }
@@ -405,16 +433,16 @@ void* processRegion(void *voidData) {
                                 fprintf(stderr, "[Region %d] Automatically finding additional centers\n", i);
                             /* and then choose enough stamps manually to fill the array */
                             buildStamps(sXMin, sXMax, sYMin, sYMax, &niS, &ntS, 1, rXBMin, rYBMin,
-                                        ciStamps, ctStamps, iRData, tRData, 0, 0);
+                                        ciStamps, ctStamps, iRData, tRData, 0, 0, mRData, rPixX, rPixY);
                         }
                     } else {
                         if (useFullSS) {
                             /* don't try and find centers, just use center of stamp */
                             buildStamps(sXMin, sXMax, sYMin, sYMax, &niS, &ntS, 0, rXBMin, rYBMin,
-                                        ciStamps, ctStamps, iRData, tRData, 0, 0);
+                                        ciStamps, ctStamps, iRData, tRData, 0, 0, mRData, rPixX, rPixY);
                         } else {
                             buildStamps(sXMin, sXMax, sYMin, sYMax, &niS, &ntS, 1, rXBMin, rYBMin,
-                                        ciStamps, ctStamps, iRData, tRData, 0, 0);
+                                        ciStamps, ctStamps, iRData, tRData, 0, 0, mRData, rPixX, rPixY);
                         }
                     }
 
@@ -525,14 +553,20 @@ void* processRegion(void *voidData) {
 
         /* no stamps at all? */
         /* FIXME We are not in a region loop here - is it ok to just return here if these conditions met? */
-//        if ((niS == 0) && (ntS == 0))
-//            continue;
-//        if (strncmp(forceConvolve, "i", 1) == 0)
-//            if (niS == 0)
-//                continue;
-//        if (strncmp(forceConvolve, "t", 1) == 0)
-//            if (ntS == 0)
-//                continue;
+        if ((niS == 0) && (ntS == 0)) {
+            fprintf(stderr, "[Region %d] No stamps found!", i);
+            return 0;
+        }
+        if (strncmp(forceConvolve, "i", 1) == 0)
+            if (niS == 0) {
+                fprintf(stderr, "[Region %d] No image stamps found!", i);
+                return 0;
+            }
+        if (strncmp(forceConvolve, "t", 1) == 0)
+            if (ntS == 0) {
+                fprintf(stderr, "[Region %d] No template stamps found!", i);
+                return 0;
+            }
 
         /*
 
@@ -544,19 +578,17 @@ void* processRegion(void *voidData) {
         */
 
         /* initialize kernel weight mask: kernel_vec */
-        getKernelVec();
-
-
+        getKernelVec(filter_x, filter_y, kernel_vec);
         fprintf(stderr, "[Region %d] Filling Template sub-stamps\n", i);
         /* fit the kernel going each way unless told otherwise */
         if (!(strncmp(forceConvolve, "i", 1) == 0)) {
             for (k = 0; k < ntS; k++) {
                 ctStamps[k].sscnt = 0;
-                fillStamp(&ctStamps[k], tRData, iRData);
+                fillStamp(&ctStamps[k], tRData, iRData, mRData, rPixX, rPixY, filter_x, filter_y, temp);
             }
             if ((strncmp(forceConvolve, "b", 1) == 0)) {
                 fprintf(stderr, "\n\n[Region %d] Trying to convolve the TEMPLATE to fit IMAGE\n", i);
-                tMerit = check_stamps(ctStamps, ntS, iRData, oRData);
+                tMerit = check_stamps(ctStamps, ntS, iRData, oRData, mRData, rPixX, rPixY, check_mat, check_vec, check_stack, wxy, kernel_coeffs, kernel, kernel_vec, indx, temp);
                 fprintf(stderr, "[Region %d]     Result : merit = %.3f\n", i, tMerit);
             } else
                 tMerit = iMerit = 0;
@@ -567,11 +599,11 @@ void* processRegion(void *voidData) {
 
             for (k = 0; k < niS; k++) {
                 ciStamps[k].sscnt = 0;
-                fillStamp(&ciStamps[k], iRData, tRData);
+                fillStamp(&ciStamps[k], iRData, tRData, mRData, rPixX, rPixY, filter_x, filter_y, temp);
             }
             if ((strncmp(forceConvolve, "b", 1) == 0)) {
                 fprintf(stderr, "\n\n[Region %d] Trying to convolve the IMAGE to fit TEMPLATE \n", i);
-                iMerit = check_stamps(ciStamps, niS, tRData, oRData);
+                iMerit = check_stamps(ciStamps, niS, tRData, oRData, mRData, rPixX, rPixY, check_mat, check_vec, check_stack, wxy, kernel_coeffs, kernel, kernel_vec, indx, temp);
                 fprintf(stderr, "[Region %d]     Result : merit = %.3f\n", i, iMerit);
             } else
                 iMerit = tMerit = 0;
@@ -581,7 +613,7 @@ void* processRegion(void *voidData) {
     else {
         /* initialize kernel weight mask: kernel_vec */
         status = 0;
-        getKernelVec();
+        getKernelVec(filter_x, filter_y, kernel_vec);
     }
 
     /* decide which way to go */
@@ -589,9 +621,13 @@ void* processRegion(void *voidData) {
     if ((strncmp(forceConvolve, "t", 1) == 0) ||
         ((tMerit < iMerit) && (!(strncmp(forceConvolve, "i", 1) == 0)))) {
         convTmpl = 1;
+        if (ciStamps) free(ciStamps);
+        ciStamps = NULL;
 
     } else {
         convTmpl = 0;
+        if (ctStamps) free(ctStamps);
+        ctStamps = NULL;
     }
 
     /* do it! */
@@ -606,7 +642,7 @@ void* processRegion(void *voidData) {
         /* and oRData is the input noise^2 */
         if (!(kernelImIn))
             fitKernel(ctStamps, iRData, tRData, oRData, tKerSol, &meansigSubstamps, &scatterSubstamps,
-                      &NskippedSubstamps);
+                      &NskippedSubstamps, mRData, rPixX, rPixY, nS, filter_x, filter_y, indx, temp);
 
         /* zero out oRData to accept output diff image */
         oRData = (float *) realloc(oRData, rPixX * rPixY * sizeof(float));
@@ -638,25 +674,26 @@ void* processRegion(void *voidData) {
             for (l = rPixX * rPixY; l--;)
                 eRData[l] *= eRData[l];
         } else {
-            eRData = makeNoiseImage4(tRData, 1. / tGain, tRdnoise / tGain);
+            makeNoiseImage4(eRData, tRData, 1. / tGain, tRdnoise / tGain, rPixX, rPixY);
         }
 
         /* spatial_convolve effectively spreads the input mtsRData mask into global mRData output mask!  bitwise... */
         fprintf(stderr, "\n[Region %d] Convolving...\n", i);
-        spatial_convolve(tRData, &eRData, rPixX, rPixY, tKerSol, oRData, mtsRData);
+
+        spatial_convolve(tRData, &eRData, rPixX, rPixY, tKerSol, oRData, mtsRData, mRData, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
 
         /* correct for background */
         for (l = hwKernel; l < rPixY - hwKernel; l++)
             for (k = hwKernel; k < rPixX - hwKernel; k++)
-                oRData[k + rPixX * l] += get_background(k, l, tKerSol);
+                oRData[k + rPixX * l] += get_background(k, l, tKerSol, rPixX, rPixY);
 
 
-        sumKernel = make_kernel(rXMin, rYMin, tKerSol);
-        fprintf(stderr, "[Region %d] Sum Kernel at %d,%d: %f\n", rXMin, rYMin, i, sumKernel);
-        sumKernel = make_kernel(rXMax, rYMax, tKerSol);
-        fprintf(stderr, "[Region %d] Sum Kernel at %d,%d: %f\n", rXMax, rYMax, i, sumKernel);
+        sumKernel = make_kernel(rXMin, rYMin, tKerSol, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
+        fprintf(stderr, "[Region %d] Sum Kernel at %d,%d: %f\n", i, rXMin, rYMin, sumKernel);
+        sumKernel = make_kernel(rXMax, rYMax, tKerSol, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
+        fprintf(stderr, "[Region %d] Sum Kernel at %d,%d: %f\n", i, rXMax, rYMax, sumKernel);
         /* use middle of region to normalize image */
-        sumKernel = make_kernel(rPixX / 2, rPixY / 2, tKerSol);
+        sumKernel = make_kernel(rPixX / 2, rPixY / 2, tKerSol, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
         fprintf(stderr, "[Region %d] Using Kernel Sum = %f\n\n", i, sumKernel);
 
         /* eRData now contains partial noise image */
@@ -674,7 +711,7 @@ void* processRegion(void *voidData) {
             for (l = rPixX * rPixY; l--;)
                 tRData[l] *= tRData[l];
         } else {
-            tRData = makeNoiseImage4(iRData, 1. / iGain, iRdnoise / iGain);
+            makeNoiseImage4(tRData, iRData, 1. / iGain, iRdnoise / iGain, rPixX, rPixY);
         }
 
         /* add noise portions to create final noise image */
@@ -697,23 +734,14 @@ void* processRegion(void *voidData) {
             savexy(ctStamps, ntS, rXBMin, rYBMin, i);
         }
 
-        /* freeStampMem(ctStamps, nStamps); */
-        /*allocateStamps(ctStamps, nStamps);*/
-
-        if (sameConv) {
-            forceConvolve = "t";
-            if (ciStamps) free(ciStamps);
-            ciStamps = NULL;
-        }
 
         /*
-
         NOTE : the following arrays will store the following info
         oRData   : Convolved input template image AND difference image AND sigma image
         tRData   : Noise image
         iRData   : Input image
-
         */
+
     } else {
         fprintf(stderr, "\n\n[Region %d] Region %d:%d,%d:%d : Convolving IMAGE\n", i, rXMin, rXMax, rYMin, rYMax);
 
@@ -725,7 +753,7 @@ void* processRegion(void *voidData) {
         /* and oRData is the input noise^2 */
         if (!(kernelImIn))
             fitKernel(ciStamps, tRData, iRData, oRData, iKerSol, &meansigSubstamps, &scatterSubstamps,
-                      &NskippedSubstamps);
+                      &NskippedSubstamps, mRData, rPixX, rPixY, nS, filter_x, filter_y, indx, temp);
 
         /* zero out oRData to accept output diff image */
         oRData = (float *) realloc(oRData, rPixX * rPixY * sizeof(float));
@@ -757,24 +785,24 @@ void* processRegion(void *voidData) {
             for (l = rPixX * rPixY; l--;)
                 eRData[l] *= eRData[l];
         } else {
-            eRData = makeNoiseImage4(iRData, 1. / iGain, iRdnoise / iGain);
+            makeNoiseImage4(eRData, iRData, 1. / iGain, iRdnoise / iGain, rPixX, rPixY);
         }
 
         /* spatial_convolve effectively spreads the input misRData mask into global mRData output mask!  bitwise... */
         fprintf(stderr, "\n[Region %d]  Convolving...\n", i);
-        spatial_convolve(iRData, &eRData, rPixX, rPixY, iKerSol, oRData, misRData);
+        spatial_convolve(iRData, &eRData, rPixX, rPixY, iKerSol, oRData, misRData, mRData, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
 
         /* correct for background */
         for (l = hwKernel; l < rPixY - hwKernel; l++)
             for (k = hwKernel; k < rPixX - hwKernel; k++)
-                oRData[k + rPixX * l] += get_background(k, l, iKerSol);
+                oRData[k + rPixX * l] += get_background(k, l, iKerSol, rPixX, rPixY);
 
-        sumKernel = make_kernel(rXMin, rYMin, iKerSol);
+        sumKernel = make_kernel(rXMin, rYMin, iKerSol, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
         fprintf(stderr, "[Region %d]  Sum Kernel at %d,%d: %f\n", i, rXMin, rYMin, sumKernel);
-        sumKernel = make_kernel(rXMax, rYMax, iKerSol);
+        sumKernel = make_kernel(rXMax, rYMax, iKerSol, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
         fprintf(stderr, "[Region %d]  Sum Kernel at %d,%d: %f\n", i, rXMax, rYMax, sumKernel);
         /* use middle of region to normalize image */
-        sumKernel = make_kernel(rPixX / 2, rPixY / 2, iKerSol);
+        sumKernel = make_kernel(rPixX / 2, rPixY / 2, iKerSol, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
         fprintf(stderr, "[Region %d]  Using Kernel Sum = %f\n\n", i, sumKernel);
 
 
@@ -793,7 +821,7 @@ void* processRegion(void *voidData) {
             for (l = rPixX * rPixY; l--;)
                 iRData[l] *= iRData[l];
         } else {
-            iRData = makeNoiseImage4(tRData, 1. / tGain, tRdnoise / tGain);
+            makeNoiseImage4(iRData, tRData, 1. / tGain, tRdnoise / tGain, rPixX, rPixY);
         }
 
         /* add noise portions to create final noise image */
@@ -816,22 +844,12 @@ void* processRegion(void *voidData) {
             savexy(ciStamps, niS, pixMin[0], pixMin[1], i);
         }
 
-        /*freeStampMem(ciStamps, nStamps);*/
-        /*allocateStamps(ciStamps, nStamps);*/
-
-        if (sameConv) {
-            forceConvolve = "i";
-            if (ctStamps) free(ctStamps);
-            ctStamps = NULL;
-        }
 
         /*
-
         NOTE : the following arrays will store the following info
         oRData   : Convolved input image AND difference image AND sigma image
         tRData   : Input template image
         iRData   : Noise image
-
         */
     }
 
@@ -865,6 +883,15 @@ void* processRegion(void *voidData) {
     */
     inv1 = 1. / sumKernel;
 
+    /* take a lock around all write operations to prevent multi-thread access to fits files */
+    fprintf(stderr,"[Region %d] Acquiring writing lock\n", i);
+    pthread_mutex_lock(&writelock);
+    fprintf(stderr,"[Region %d] Acquired writing lock\n", i);
+
+    /* open up output image */
+    if (fits_open_file(&oPtr, outim, 1, &status))
+        printError(status);
+
     if (inclConvImage || convImage) {
         /* renormalize by kernel if necessary */
         for (l = hwKernel; l < rPixY - hwKernel; l++) {
@@ -885,9 +912,10 @@ void* processRegion(void *voidData) {
                     printError(status);
             if (hp_fits_write_subset(oPtr, 0, 2, oNaxes, oRData, &status,
                                      outShort, outBzero, outBscale, fpixelOutX, fpixelOutY,
-                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo))
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY))
                 printError(status);
         }
+
         if (convImage) {
             if (fits_open_file(&ePtr, convImage, 1, &status))
                 printError(status);
@@ -897,7 +925,7 @@ void* processRegion(void *voidData) {
 
             if (hp_fits_write_subset(ePtr, 0, 2, oNaxes, oRData, &status,
                                      outShort, outBzero, outBscale, fpixelOutX, fpixelOutY,
-                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo) ||
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY) ||
                 fits_close_file(ePtr, &status))
                 printError(status);
         }
@@ -940,7 +968,7 @@ void* processRegion(void *voidData) {
                 for (l = 0; l < nS; l++) {
                     /* if was fit with a good legit substamp */
                     if (ctStamps[l].sscnt < ctStamps[l].nss) {
-                        getFinalStampSig(&ctStamps[l], oRData, tRData, &sum);
+                        getFinalStampSig(&ctStamps[l], oRData, tRData, &sum, mRData, rPixX, rPixY);
                         temp2[k++] = sum;
                         /*fprintf(stderr, "SSSIG %d : %f\n", k, sum);*/
                     }
@@ -978,7 +1006,7 @@ void* processRegion(void *voidData) {
                 for (l = 0; l < nS; l++) {
                     /* if was fit with a good legit substamp */
                     if (ciStamps[l].sscnt < ciStamps[l].nss) {
-                        getFinalStampSig(&ciStamps[l], oRData, iRData, &sum);
+                        getFinalStampSig(&ciStamps[l], oRData, iRData, &sum, mRData, rPixX, rPixY);
                         temp2[k++] = sum;
                         /*fprintf(stderr, "SSSIG %d : %f\n", k, sum);*/
                     }
@@ -996,7 +1024,7 @@ void* processRegion(void *voidData) {
     fprintf(stderr, "[Region %d]  Getting diffim stats for GOOD pixels : \n", i);
     getStampStats3(oRData, 0, 0, rPixX, rPixY,
                    &sum, &mean, &median,
-                   &mode, &sd, &fwhm, &lfwhm, 0x0, 0xffff, 5);
+                   &mode, &sd, &fwhm, &lfwhm, 0x0, 0xffff, 5, mRData, rPixX, rPixY);
     fprintf(stderr, "[Region %d]    Mean   : %.2f\n", i, mean);
     fprintf(stderr, "[Region %d]    Median : %.2f\n", i, median);
     fprintf(stderr, "[Region %d]    Mode   : %.2f\n", i, mode);
@@ -1008,13 +1036,13 @@ void* processRegion(void *voidData) {
     if (convTmpl) {
         getStampStats3(tRData, 0, 0, rPixX, rPixY,
                        &nsum, &nmean, &nmedian,
-                       &nmode, &nsd, &nfwhm, &nlfwhm, 0x0, 0xffff, 5);
-        getNoiseStats3(oRData, tRData, &x2norm, &nx2norm, 0x0, 0xffff);
+                       &nmode, &nsd, &nfwhm, &nlfwhm, 0x0, 0xffff, 5, mRData, rPixX, rPixY);
+        getNoiseStats3(oRData, tRData, &x2norm, &nx2norm, 0x0, 0xffff, mRData, rPixX, rPixY);
     } else {
         getStampStats3(iRData, 0, 0, rPixX, rPixY,
                        &nsum, &nmean, &nmedian,
-                       &nmode, &nsd, &nfwhm, &nlfwhm, 0x0, 0xffff, 5);
-        getNoiseStats3(oRData, iRData, &x2norm, &nx2norm, 0x0, 0xffff);
+                       &nmode, &nsd, &nfwhm, &nlfwhm, 0x0, 0xffff, 5, mRData, rPixX, rPixY);
+        getNoiseStats3(oRData, iRData, &x2norm, &nx2norm, 0x0, 0xffff, mRData, rPixX, rPixY);
     }
 
     fprintf(stderr, "[Region %d]    Mean   : %.2f\n", i, nmean);
@@ -1026,7 +1054,7 @@ void* processRegion(void *voidData) {
 
     /* find ratio for GOOD pixels only */
     if (!(kernelImIn))
-        fprintf(stderr, "[Region %d]  Emperical / Expected Noise for GOOD pixels = %.2f\n", i, sd / nmean);
+        fprintf(stderr, "[Region %d]  Empirical / Expected Noise for GOOD pixels = %.2f\n", i, sd / nmean);
     fprintf(stderr, "[Region %d]  X2NORM = %.2f\n\n", i, x2norm);
 
     if (!(kernelImIn)) {
@@ -1036,7 +1064,7 @@ void* processRegion(void *voidData) {
     fprintf(stderr, "[Region %d] Getting diffim stats for OK pixels : \n", i);
     getStampStats3(oRData, 0, 0, rPixX, rPixY,
                    &summ, &meanm, &medianm,
-                   &modem, &sdm, &fwhmm, &lfwhmm, 0xff, FLAG_OUTPUT_ISBAD, 5);
+                   &modem, &sdm, &fwhmm, &lfwhmm, 0xff, FLAG_OUTPUT_ISBAD, 5, mRData, rPixX, rPixY);
     fprintf(stderr, "[Region %d]    Mean   : %.2f\n", i, meanm);
     fprintf(stderr, "[Region %d]    Median : %.2f\n", i, medianm);
     fprintf(stderr, "[Region %d]    Mode   : %.2f\n", i, modem);
@@ -1048,11 +1076,11 @@ void* processRegion(void *voidData) {
     if (convTmpl)
         getStampStats3(tRData, 0, 0, rPixX, rPixY,
                        &nsumm, &nmeanm, &nmedianm,
-                       &nmodem, &nsdm, &nfwhmm, &nlfwhmm, 0xff, FLAG_OUTPUT_ISBAD, 5);
+                       &nmodem, &nsdm, &nfwhmm, &nlfwhmm, 0xff, FLAG_OUTPUT_ISBAD, 5, mRData, rPixX, rPixY);
     else
         getStampStats3(iRData, 0, 0, rPixX, rPixY,
                        &nsumm, &nmeanm, &nmedianm,
-                       &nmodem, &nsdm, &nfwhmm, &nlfwhmm, 0xff, FLAG_OUTPUT_ISBAD, 5);
+                       &nmodem, &nsdm, &nfwhmm, &nlfwhmm, 0xff, FLAG_OUTPUT_ISBAD, 5, mRData, rPixX, rPixY);
 
     fprintf(stderr, "[Region %d]    Mean   : %.2f\n", i, nmeanm);
     fprintf(stderr, "[Region %d]    Median : %.2f\n", i, nmedianm);
@@ -1063,7 +1091,7 @@ void* processRegion(void *voidData) {
 
     /* find ratio for GOOD pixels only */
     if (!(kernelImIn))
-        fprintf(stderr, "[Region %d]  Emperical / Expected Noise for OK pixels = %.2f\n\n", i, sdm / nmeanm);
+        fprintf(stderr, "[Region %d]  Empirical / Expected Noise for OK pixels = %.2f\n\n", i, sdm / nmeanm);
 
     /* scale noise in OK pixels so that the ratios are equal! */
     if (rescaleOK) {
@@ -1118,7 +1146,7 @@ void* processRegion(void *voidData) {
     if (fits_movabs_hdu(oPtr, 1, NULL, &status) ||
         hp_fits_write_subset(oPtr, 0, 2, oNaxes, oRData, &status,
                              outShort, outBzero, outBscale, fpixelOutX, fpixelOutY,
-                             lpixelOutX, lpixelOutY, xBufLo, yBufLo))
+                             lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY))
         printError(status);
 
     /* extraneous code, but the convolved image is the second layer if its asked for... */
@@ -1144,7 +1172,7 @@ void* processRegion(void *voidData) {
             if (fits_movrel_hdu(oPtr, 1, NULL, &status) ||
                 hp_fits_write_subset(oPtr, 0, 2, oNaxes, oRData, &status,
                                      outShort, outBzero, outBscale, fpixelOutX, fpixelOutY,
-                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo))
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY))
                 printError(status);
         }
         if (sigmaImage) {
@@ -1152,7 +1180,7 @@ void* processRegion(void *voidData) {
                 printError(status);
             if (hp_fits_write_subset(ePtr, 0, 2, oNaxes, oRData, &status,
                                      outShort, outBzero, outBscale, fpixelOutX, fpixelOutY,
-                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo) ||
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY) ||
                 fits_close_file(ePtr, &status))
                 printError(status);
         }
@@ -1170,12 +1198,12 @@ void* processRegion(void *voidData) {
         if (convTmpl) {
             if (hp_fits_write_subset(oPtr, 0, 2, oNaxes, tRData, &status,
                                      outNShort, outNiBzero, outNiBscale, fpixelOutX, fpixelOutY,
-                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo))
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY))
                 printError(status);
         } else {
             if (hp_fits_write_subset(oPtr, 0, 2, oNaxes, iRData, &status,
                                      outNShort, outNiBzero, outNiBscale, fpixelOutX, fpixelOutY,
-                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo))
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY))
                 printError(status);
         }
 
@@ -1192,12 +1220,12 @@ void* processRegion(void *voidData) {
         if (convTmpl) {
             if (hp_fits_write_subset(ePtr, 0, 2, oNaxes, tRData, &status,
                                      outNShort, outNiBzero, outNiBscale, fpixelOutX, fpixelOutY,
-                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo))
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY))
                 printError(status);
         } else {
             if (hp_fits_write_subset(ePtr, 0, 2, oNaxes, iRData, &status,
                                      outNShort, outNiBzero, outNiBscale, fpixelOutX, fpixelOutY,
-                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo))
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY))
                 printError(status);
         }
         if (fits_write_key_str(ePtr, hKeyword, hInfo, "", &status) ||
@@ -1210,7 +1238,7 @@ void* processRegion(void *voidData) {
             printError(status);
         if (hp_fits_write_subset_int(ePtr, 0, 2, oNaxes, mRData, &status,
                                      1, 32768, 1, fpixelOutX, fpixelOutY,
-                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo) ||
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY) ||
             fits_close_file(ePtr, &status))
             printError(status);
     }
@@ -1355,8 +1383,16 @@ void* processRegion(void *voidData) {
         }
     }
 
-    fprintf(stderr, "[Region %i] Finished\n\n", i);
+    /* close open fits files */
+    if (fits_close_file(oPtr, &status)) {
+        printError(status);
+    }
 
+    /* release the lock around all write operations to prevent multi-thread access to fits files */
+    fprintf(stderr,"[Region %d] Releasing writing lock\n", i);
+    pthread_mutex_unlock(&writelock);
+
+    /* free things now we're done with them */
     free(tRData);
     tRData = NULL;
     free(iRData);
@@ -1381,21 +1417,37 @@ void* processRegion(void *voidData) {
         ciStamps = NULL;
     }
     if (iKerSol) {
-        free(tKerSol);
-        tKerSol = NULL;
-    }
-    if (tKerSol) {
         free(iKerSol);
         iKerSol = NULL;
     }
+    if (tKerSol) {
+        free(tKerSol);
+        tKerSol = NULL;
+    }
+
+    if (temp) free(temp);
+    if (indx) free(indx);
+    if (kernel) free(kernel);
+    if (kernel_coeffs) free(kernel_coeffs);
+    for (j = 0; j < nCompKer; j++)
+        if (kernel_vec[j]) free(kernel_vec[j]);
+    if (kernel_vec) free(kernel_vec);
+    if (filter_x) free(filter_x);
+    if (filter_y) free(filter_y);
+    if (check_vec) free(check_vec);
+    for (j = 0; j < nC; j++)
+        if (check_mat[j]) free(check_mat[j]);
+    if (check_mat) free(check_mat);
+    if (check_stack) free(check_stack);
+    fprintf(stderr, "[Region %i] Finished\n\n", i);
+
 }
 
 
 
 int main(int argc, char *argv[]) {
-    int i, j, k, l, m;                              /* generic indices */
+    int i, j, k;                              /* generic indices */
     char scrStr[SCRLEN];                         /* scratch string */
-    double sumKernel;                              /* photometric normalization */
 
     /*
       NOTE : The .fits images are 1-indexed, while these arrays contained within are
@@ -1407,13 +1459,11 @@ int main(int argc, char *argv[]) {
     fitsfile *tPtr;
     int tBitpix, tNaxis;
     long tNaxes[MAXDIM];
-    double tMerit = 0;
 
     /* comparison image */
     fitsfile *iPtr;
     int iBitpix, iNaxis;
     long iNaxes[MAXDIM];
-    double iMerit = 0;
 
     /* output image */
     fitsfile *oPtr;
@@ -1429,36 +1479,16 @@ int main(int argc, char *argv[]) {
 
     int *rXMins, *rYMins, *rXMaxs, *rYMaxs; /* each region, good data */
     int rXMin, rYMin, rXMax, rYMax;         /* each region, good data */
-    int rXBMin, rYBMin, rXBMax, rYBMax;     /* each region, including buffer */
     int nR;                                 /* region counter */
 
-    int sXMin, sYMin, sXMax, sYMax;         /* each stamp */
-    int niS, ntS;                           /* stamp counter */
-
-    int convTmpl;                           /* which way the convolution goes */
-
     /* cfitsio */
-    long pixMin[2], pixMax[2];
-    long inc[2] = {1, 1};
-    int fpixelOutX, fpixelOutY, lpixelOutX, lpixelOutY;
-    int anynul;
-    int status = 0, kInfoNum, nx2norm;
+    int status = 0, kInfoNum;
     char **tform = NULL, **ttype = NULL, **tunit = NULL;
     char hKeyword[1024], hInfo[2048];
 
-    double sum, mean, median, mode, sd, fwhm, lfwhm, x2norm;
-    double summ, meanm, medianm, modem, sdm, fwhmm, lfwhmm;
-    double nsum, nmean, nmedian, nmode, nsd, nfwhm, nlfwhm;
-    double nsumm, nmeanm, nmedianm, nmodem, nsdm, nfwhmm, nlfwhmm;
-
-    float iSFrac, tSFrac;
-    float fitThresh;
-    int flag;
     /* misc */
     FILE *rFile;
-    double inv1;
     char *pstr;
-    int sBorder; /*armin*/
 
     struct tm *tm;
     time_t thetime;
@@ -1496,7 +1526,6 @@ int main(int argc, char *argv[]) {
         if (fits_close_file(ePtr, &status))
             printError(status);
     }
-
     /* open up, get comparison image bitpix, # dimensions, image size */
     if (fits_open_file(&iPtr, image, 0, &status))
         printError(status);
@@ -1741,7 +1770,6 @@ int main(int argc, char *argv[]) {
 
     nComp = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     nC = nCompKer + 2;
-    nCompBG = (nCompKer - 1) * nComp + 1;
     nBGVectors = ((bgOrder + 1) * (bgOrder + 2)) / 2;
     nCompTotal = nCompKer * nComp + nBGVectors;
 
@@ -1780,42 +1808,16 @@ int main(int argc, char *argv[]) {
     kcStep = kcStep ? kcStep : fwKernel; /* size of step in spatial_convolve */
 
     nStamps = nStampX * nStampY;
-    sBorder = hwKSStamp + hwKernel;
 
-    fprintf(stderr, "Mallocing massive amounts of memory...\n");
-
-    /* malloc data structures */
-    if (!(temp = (float *) calloc((fwKSStamp + fwKernel) * fwKSStamp, sizeof(float))) ||
-        !(indx = (int *) calloc((nCompTotal + 1 + 100), sizeof(int))) ||
-
-        !(kernel = (double *) calloc(fwKernel * fwKernel, sizeof(double))) ||
-        !(kernel_coeffs = (double *) calloc(nCompKer, sizeof(double))) ||
-
-        !(kernel_vec = (double **) calloc(nCompKer, sizeof(double *))) ||
-
-        !(filter_x = (double *) calloc(nCompKer * fwKernel, sizeof(double))) ||
-        !(filter_y = (double *) calloc(nCompKer * fwKernel, sizeof(double))) ||
-
-        !(check_mat = (double **) calloc(nC, sizeof(double *))) ||
-        !(check_vec = (double *) calloc(nC, sizeof(double))) ||
-        !(check_stack = (double *) calloc(nStamps, sizeof(double)))) {
-        exit(1);
-    }
-    for (i = 0; i < nC; i++)
-        if (!(check_mat[i] = (double *) calloc(nC, sizeof(double)))) {
-            exit(1);
-        }
 
     /******/
     /* determine pixel limits of regions, and of stamps in region */
     /******/
 
-    /* maximum limit of overlap between images */
-    /*    to be used in newest version, which deals with borders later... */
-    xMin = (gdXmin ? imax(0, gdXmin) : 0);
-    yMin = (gdYmin ? imax(0, gdYmin) : 0);
-    xMax = -1 + (gdXmax ? imin(imin(tNaxes[0], iNaxes[0]), gdXmax) : imin(tNaxes[0], iNaxes[0]));
-    yMax = -1 + (gdYmax ? imin(imin(tNaxes[1], iNaxes[1]), gdYmax) : imin(tNaxes[1], iNaxes[1]));
+    xMin = 0;
+    yMin = 0;
+    xMax = -1 + imin(tNaxes[0], iNaxes[0]);
+    yMax = -1 + imin(tNaxes[1], iNaxes[1]);
 
     nR = 0;
     if (regFile) {
@@ -1952,9 +1954,6 @@ int main(int argc, char *argv[]) {
         loadxyfile(sstampFile, cmpFile);
     }
 
-    /* initialize to requested value in case things change later on */
-    fitThresh = kerFitThresh;
-
     /* limit number of threads to number of regions */
     if (nThread > nR) {
         fprintf(stderr, "Limiting number of threads to number of regions (%d)\n", nR);
@@ -1966,8 +1965,8 @@ int main(int argc, char *argv[]) {
     nThread = nR;
 
     pthread_t thread[nThread];
+
     struct RegionData regData[nThread];
-    int regIdx;
 //    int regPerThread=(nR+nThread-1)/nThread;
     for (i=0; i<nThread; i++) {
 //        regData[i].regNumStart=i*regPerThread;
@@ -1983,42 +1982,28 @@ int main(int argc, char *argv[]) {
             regData[i].iNaxes[ii] = iNaxes[ii];
             regData[i].oNaxes[ii] = oNaxes[ii];
         }
-        regData[i].tBitpix=tBitpix;
         regData[i].tNaxis=tNaxis;
-        regData[i].iBitpix=iBitpix;
         regData[i].iNaxis=iNaxis;
-        regData[i].oBitpix=oBitpix;
-        regData[i].oNaxis=oNaxis;
-        for (int ii = 0; ii < nR; ii++) {
-            regData[i].rXMins[ii] = rXMins[ii];
-            regData[i].rYMins[ii] = rYMins[ii];
-            regData[i].rXMaxs[ii] = rXMaxs[ii];
-            regData[i].rYMaxs[ii] = rYMaxs[ii];
-        }
-        regData[i].rXMin=rXMin;
-        regData[i].rYMin=rYMin;
-        regData[i].rXMax=rXMax;
-        regData[i].rYMax=rYMax;
-        regData[i].rXBMin=rXBMin;
-        regData[i].rYBMin=rYBMin;
-        regData[i].rXBMax=rXBMax;
-        regData[i].rYBMax=rYBMax;
-        regData[i].tPtr=tPtr;
-        regData[i].iPtr=iPtr;
-        regData[i].oPtr=oPtr;
-        regData[i].ePtr=ePtr;
+        regData[i].rXMin = rXMins[i];
+        regData[i].rYMin = rYMins[i];
+        regData[i].rXMax = rXMaxs[i];
+        regData[i].rYMax = rYMaxs[i];
         regData[i].kInfoNum=kInfoNum;
         /* TODO What if nThread != nR - need to pass regPerThread to each thread? */
     }
+
     /* ensure last thread does not try to process a non-existant region */
 //    regData[nThread - 1].stop=nR;
     /* start the threads and wait for them to complete */
+
     for (i=0; i<nThread; i++) {
-//        pthread_create(&thread[i], NULL, processRegion, &regData[i]);
+        pthread_create(&thread[i], NULL, processRegion, &regData[i]);
     }
+
     for (i=0; i<nThread; i++) {
-//        pthread_join(thread[i], NULL);
+        pthread_join(thread[i], NULL);
     }
+
 
     /* add fits header info */
     fits_movabs_hdu(oPtr, 1, NULL, &status);
@@ -2118,22 +2103,9 @@ int main(int argc, char *argv[]) {
     free(deg_fixe);
     free(sigma_gauss);
 
-    if (temp) free(temp);
-    if (indx) free(indx);
-    if (kernel) free(kernel);
-    if (kernel_coeffs) free(kernel_coeffs);
-    if (kernel_vec) free(kernel_vec);
-    if (filter_x) free(filter_x);
-    if (filter_y) free(filter_y);
-    if (check_vec) free(check_vec);
-    if (check_stack) free(check_stack);
-
     if (xcmp) free(xcmp);
     if (ycmp) free(ycmp);
 
-    for (i = 0; i < nC; i++)
-        if (check_mat[i]) free(check_mat[i]);
-    if (check_mat) free(check_mat);
 
     if ((doKerInfo) || (kernelImOut)) {
         for (k = 0; k < nR; k++) {

@@ -566,12 +566,19 @@
           Fixed minor bug on line 1359 (Taro Soto)
           Another bug find by Soto in extractkern.c:make_kernel
 
-    v 5.xxx (not working yet)
-          Allows user to input basis functions for the kernel
-             -pca nk k0.fits ... n(k-1).fits
+    v 6.0.0
+          Made multi-threaded by region
+            * Added `-nt` argument to specify number of threads to use
+          Removed extractkern module
+          Removed PCA code
+          Removed `-sconv` argument
+            * pre-compute convolution direction and pass `-c` instead to ensure all convolved in same direction)
+          Removed `-gd` argument
+          Removed memory leaks
+          Removed unused variables and assignments
+          Removed unused functions
 
-
-  TODO   : Make multi-threaded by region..!
-	   Range of coordinates from -1 to 1 (build_matrix_new)
-	   Try delta function convolution kerntl
+  TODO
+	   Range of coordinates from -1 to 1
+	   Try delta function convolution kernel
            

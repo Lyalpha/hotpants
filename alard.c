@@ -1,9 +1,7 @@
 #include<stdio.h>
 #include<string.h>
 #include<math.h>
-#include<malloc.h>
 #include<stdlib.h>
-#include<fitsio.h>
 
 #include "defaults.h"
 #include "globals.h"
@@ -21,7 +19,7 @@ code.
 
 */
 
-void getKernelVec() {
+void getKernelVec(double *filter_x, double *filter_y, double **kernel_vec) {
     /*****************************************************
      * Fills kernel_vec with kernel weight filter, called only once
      *****************************************************/
@@ -33,20 +31,20 @@ void getKernelVec() {
         for (idegx = 0; idegx <= deg_fixe[ig]; idegx++) {
             for (idegy = 0; idegy <= deg_fixe[ig]-idegx; idegy++) {
                 /* stores kernel weight mask for each order */
-                kernel_vec[nvec] = kernel_vector(nvec, idegx, idegy, ig, &ren);
+                kernel_vec[nvec] = kernel_vector(nvec, idegx, idegy, ig, &ren, filter_x, filter_y, kernel_vec);
                 nvec++;
             }
         }
     }
 }
 
-int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
+int fillStamp(stamp_struct *stamp, float *imConv, float *imRef, int *mRData, int rPixX, int rPixY, double *filter_x, double *filter_y, float *temp) {
     /*****************************************************
      * Fills stamp->vectors with convolved images, and 
      *   pixel indices multiplied by each other for background fit 
      *****************************************************/
     
-    int       ren = 0;
+    int       ren;
     int       i,j,xi,yi,dx,dy,idegx,idegy,di,dj,nv,ig,nvec;
     double    ax,ay,xf,yf;
     double *im;
@@ -79,14 +77,14 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
                 
                 /* fill stamp->vectors[nvec] with convolved image */
                 /* image is convolved with functional form of kernel, fit later for amplitude */
-                xy_conv_stamp(stamp, imConv, nvec, ren);
+                xy_conv_stamp(stamp, imConv, nvec, ren, rPixX, filter_x, filter_y, temp);
                 ++nvec;
             }
         }
     }
     
     /* get the krefArea data */
-    if (cutSStamp(stamp, imRef))
+    if (cutSStamp(stamp, imRef, mRData, rPixX, rPixY))
         return 1;
     
     /* fill stamp->vectors[nvec+++] with x^(bg) * y^(bg) for background fit */
@@ -119,12 +117,12 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
     /* build stamp->mat from stamp->vectors */
     build_matrix0(stamp);
     /* build stamp->scprod from stamp->vectors and imRef */
-    build_scprod0(stamp, imRef);
+    build_scprod0(stamp, imRef, rPixX);
     
     return 0;
 }
 
-double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
+double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren, double *filter_x, double *filter_y, double **kernel_vec) {
     /*****************************************************
      * Creates kernel sized entry for kernel_vec for each kernel degree 
      *   Mask of filter_x * filter_y, filter = exp(-x**2 sig) * x^deg 
@@ -134,10 +132,6 @@ double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
     double    *vector=NULL,*kernel0=NULL;
     int       i,j,k,dx,dy,ix;
     double    sum_x,sum_y,x,qe;
-    
-    if (usePCA) {
-        return kernel_vector_PCA(n, deg_x, deg_y, ig, ren);
-    }
     
     vector = (double *)malloc(fwKernel*fwKernel*sizeof(double));
     dx = (deg_x / 2) * 2 - deg_x;
@@ -189,65 +183,28 @@ double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
     return vector;
 }
 
-double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
-    /*****************************************************
-     * Creates kernel sized entry for kernel_vec for each kernel degree 
-     *   Mask of filter_x * filter_y, filter = exp(-x**2 sig) * x^deg 
-     *   Subtract off kernel_vec[0] if n > 0
-     * NOTE: this does not use any image
-     ******************************************************/
-    double    *vector=NULL,*kernel0=NULL;
-    int i,j;
-    
-    vector = (double *)malloc(fwKernel*fwKernel*sizeof(double));
-    
-    for (i = 0; i < fwKernel; i++) {
-        for (j = 0; j < fwKernel; j++) {
-            vector[i+fwKernel*j] = PCA[n][i+fwKernel*j];
-        }
-    }
-    
-    if (n > 0)
-        kernel0 = kernel_vec[0];
-    
-    if (n > 0) {
-        for (i = 0; i < fwKernel * fwKernel; i++) {
-            vector[i] -= kernel0[i];
-        }
-        *ren = 1;
-    }
-    
-    return vector;
-}
-
-void xy_conv_stamp(stamp_struct *stamp, float *image, int n, int ren) {
+void xy_conv_stamp(stamp_struct *stamp, const float *_image, int n, int ren, int rPixX, const double *filter_x, const double *filter_y, float * temp) {
     /*****************************************************
      * Called for each degree of convolution, ngauss by deg_gauss 
      * Each convolution is stored in stamp->vectors[n], imc here
      ******************************************************/
     int       i,j,xc,yc,xij,sub_width,xi,yi;
     double    *v0,*imc;
-    
-    
-    if (usePCA) {
-        xy_conv_stamp_PCA(stamp, image, n, ren);
-        return;
-    }
-    
+
     xi  = stamp->xss[stamp->sscnt];
     yi  = stamp->yss[stamp->sscnt];
     imc = stamp->vectors[n];
     
     sub_width = fwKSStamp + fwKernel - 1;
     
-    /* pull area to convolve out of full reference image region */
+    /* pull area to convolve out of full reference _image region */
     /* convolve with y filter */
     for(i = xi - hwKSStamp - hwKernel; i <= xi + hwKSStamp + hwKernel; i++) {
         for(j = yi - hwKSStamp; j <= yi + hwKSStamp; j++) {
             xij = i - xi + sub_width / 2 + sub_width * (j - yi + hwKSStamp);
             temp[xij] = 0.0;
             for(yc = -hwKernel; yc <= hwKernel; yc++) {
-                temp[xij] += image[i+rPixX*(j+yc)] * filter_y[hwKernel-yc+n*fwKernel];
+                temp[xij] += _image[i + rPixX * (j + yc)] * filter_y[hwKernel - yc + n * fwKernel];
             }
         }
     }
@@ -268,46 +225,10 @@ void xy_conv_stamp(stamp_struct *stamp, float *image, int n, int ren) {
         for(i = 0; i < fwKSStamp * fwKSStamp; i++) imc[i] -= v0[i];
     }
     
-    return;
-}
-
-void xy_conv_stamp_PCA(stamp_struct *stamp, float *image, int n, int ren) {
-    /*****************************************************
-     * Called for each degree of convolution, ngauss by deg_gauss 
-     * Each convolution is stored in stamp->vectors[n], imc here
-     ******************************************************/
-    
-    int       i,j,xc,yc,xij,xi,yi;
-    double    *v0,*imc;
-    
-    xi  = stamp->xss[stamp->sscnt];
-    yi  = stamp->yss[stamp->sscnt];
-    imc = stamp->vectors[n];
-    
-    /* pull area to convolve out of full reference image region */
-    for(j = yi - hwKSStamp; j <= yi + hwKSStamp; j++) {
-        for(i = xi - hwKSStamp; i <= xi + hwKSStamp; i++) {
-            xij      = i - (xi - hwKSStamp) + fwKSStamp * (j - (yi - hwKSStamp));
-            imc[xij] = 0.;
-            
-            for(yc = -hwKernel; yc <= hwKernel; yc++) {
-                for(xc = -hwKernel; xc <= hwKernel; xc++) {
-                    imc[xij] += image[(i+xc)+rPixX*(j+yc)] * PCA[n][(xc+hwKernel) + fwKernel*(yc+hwKernel)];
-                }
-            }
-        }
-    }
-    
-    if (ren) {
-        v0 = stamp->vectors[0];
-        for(i = 0; i < fwKSStamp * fwKSStamp; i++) imc[i] -= v0[i];
-    }
-    
-    return;
 }
 
 void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise, double *kernelSol, 
-               double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps) {
+               double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps, int *mRData, int rPixX, int rPixY, int nS, double *filter_x, double *filter_y, int *indx, float *temp) {
     /*****************************************************
      * Complete fit for kernel solution
      *****************************************************/
@@ -315,11 +236,11 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
     double d, **matrix;
     char check;
     int i,mat_size;
-    int ncomp1, ncomp2, ncomp, nbg_vec;
+    int ncomp1, ncomp2, nbg_vec;
+    double **wxy;
     
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
-    ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
     
     mat_size   = ncomp1 * ncomp2 + nbg_vec + 1;
@@ -340,26 +261,26 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
     
     
     if (verbose>=2) fprintf(stderr, " Expanding Matrix For Full Fit\n");
-    build_matrix(stamps, nS, matrix);
-    build_scprod(stamps, nS, imRef, kernelSol);
+    build_matrix(stamps, nS, matrix, rPixX, rPixY, wxy);
+    build_scprod(stamps, nS, imRef, kernelSol, rPixX, wxy);
     
     ludcmp(matrix, mat_size, indx, &d);
     lubksb(matrix, mat_size, indx, kernelSol);
     
     if (verbose>=2) fprintf(stderr, " Checking again\n");
-    check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
+    check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps, mRData, rPixX, rPixY, nS, filter_x, filter_y, temp);
     
     while(check) {
         
         fprintf(stderr, "\n Re-Expanding Matrix\n");
-        build_matrix(stamps, nS, matrix);
-        build_scprod(stamps, nS, imRef, kernelSol);
+        build_matrix(stamps, nS, matrix, rPixX, rPixY, wxy);
+        build_scprod(stamps, nS, imRef, kernelSol, rPixX, wxy);
         
         ludcmp(matrix, mat_size, indx, &d);
         lubksb(matrix, mat_size, indx, kernelSol);
         
         fprintf(stderr, " Checking again\n");          
-        check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps); 
+        check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps, mRData, rPixX, rPixY, nS, filter_x, filter_y, temp);
     }
     fprintf(stderr, " Sigma clipping of bad stamps converged, kernel determined\n");
     
@@ -369,8 +290,6 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
         free(wxy[i]);
     free(matrix);
     free(wxy);
-    
-    return;
 }
 
 
@@ -380,15 +299,12 @@ void build_matrix0(stamp_struct *stamp) {
      *****************************************************/
     
     int       i,j,pixStamp,k,i1,ivecbg=0;
-    int       ncomp1, ncomp2, ncomp, nbg_vec;
+    int       ncomp1;
     double    p0,q;
     double    **vec;
     
     ncomp1   = nCompKer;
-    ncomp2   = ((kerOrder + 1) * (kerOrder + 2)) / 2;
-    ncomp    = ncomp1 * ncomp2;
-    nbg_vec  = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     pixStamp = fwKSStamp * fwKSStamp;
     
     vec      = stamp->vectors;
@@ -423,57 +339,51 @@ void build_matrix0(stamp_struct *stamp) {
         q += vec[ivecbg][k] * vec[ncomp1][k];
     stamp->mat[ncomp1+1][ncomp1+1] = q;
     
-    return;
 }
 
-void build_scprod0(stamp_struct *stamp, float *image) {
+void build_scprod0(stamp_struct *stamp, const float *_image, int rPixX) {
     /*****************************************************
      * Build the right side of each stamp's least squares matrix
      *    stamp.scprod = degree of kernel fit + 1 bg term
      *****************************************************/
     
     int       xc,yc,xi,yi,i1,k;
-    int       ncomp1, ncomp2, ncomp, nbg_vec;
+    int       ncomp1;
     double    p0,q;
     double **vec;
     
     ncomp1  = nCompKer;
-    ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
-    ncomp   = ncomp1 * ncomp2;
-    nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     vec = stamp->vectors;
     xi  = stamp->xss[stamp->sscnt];
     yi  = stamp->yss[stamp->sscnt];
-    
     /* Do eqn 4. in Alard */
     
-    /* Multiply each order's convolved image with reference image */
+    /* Multiply each order's convolved _image with reference _image */
     for (i1 = 0; i1 < ncomp1; i1++) {
         p0 = 0.0;
         for (xc = -hwKSStamp; xc <= hwKSStamp; xc++) {
             for (yc = -hwKSStamp; yc <= hwKSStamp; yc++) {
                 k   = xc + hwKSStamp + fwKSStamp * (yc + hwKSStamp);
-                p0 += vec[i1][k] * image[xc+xi+rPixX*(yc+yi)];
+                p0 += vec[i1][k] * _image[xc + xi + rPixX * (yc + yi)];
             }
         }
         stamp->scprod[i1+1] = p0;
     }
     
-    /* Multiply first order background model with reference image */
+    /* Multiply first order background model with reference _image */
     q = 0.0;
     for (xc = -hwKSStamp; xc <= hwKSStamp; xc++) {
         for (yc = -hwKSStamp; yc <= hwKSStamp; yc++) {
             k  = xc + hwKSStamp + fwKSStamp * (yc + hwKSStamp);
-            q += vec[ncomp1][k] * image[xc+xi+rPixX*(yc+yi)];	 
+            q += vec[ncomp1][k] * _image[xc + xi + rPixX * (yc + yi)];
         }
     }
     stamp->scprod[ncomp1+1] = q;
     
-    return;
 }
 
-double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) {
+double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise, int *mRData, int rPixX, int rPixY, double **check_mat, double *check_vec, double *check_stack, double **wxy, double *kernel_coeffs, double *kernel, double **kernel_vec, int *indx, float *temp) {
     /*****************************************************
      * Fit each stamp independently, reject significant outliers
      *    Next fit good stamps globally
@@ -481,14 +391,14 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
      *****************************************************/
     
     int    nComps,i,im,jm,mcnt1,mcnt2,mcnt3;
-    double d,sum=0,kmean,kstdev;
+    double d,sum, kmean,kstdev;
     double merit1,merit2,merit3,sig1,sig2,sig3;
     float *m1,*m2,*m3,*ks;
-    int    xc, yc, nks;
+    int    nks;
     
     double **matrix;
     int mat_size;
-    int ncomp1, ncomp2, ncomp, nbg_vec;
+    int ncomp1, ncomp2, nbg_vec;
     
     int ntestStamps;
     double       *testKerSol = NULL;
@@ -500,7 +410,6 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
     
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
-    ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
     mat_size   = ncomp1 * ncomp2 + nbg_vec + 1;
     
@@ -511,10 +420,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
     nComps      = nCompKer + 1;
     
     for (i = 0; i < nS; i++) {
-        
-        xc    = stamps[i].xss[stamps[i].sscnt];
-        yc    = stamps[i].yss[stamps[i].sscnt];
-        
+
         /* extract check_mat to solve one particular stamp */
         for (im = 1; im <= nComps; im++) {
             check_vec[im] = stamps[i].scprod[im];
@@ -603,13 +509,13 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
         
         /* finally do fit */
         if (verbose >= 2) fprintf(stderr, " Expanding Test Matrix For Fit\n");
-        build_matrix(testStamps, ntestStamps, matrix);
-        build_scprod(testStamps, ntestStamps, imRef, testKerSol);
+        build_matrix(testStamps, ntestStamps, matrix, rPixX, rPixY, wxy);
+        build_scprod(testStamps, ntestStamps, imRef, testKerSol, rPixX, wxy);
         ludcmp(matrix, mat_size, indx, &d);
         lubksb(matrix, mat_size, indx, testKerSol);
         
         /* get the kernel sum to normalize figures of merit! */
-        kmean = make_kernel(0, 0, testKerSol);
+        kmean = make_kernel(0, 0, testKerSol, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
         
         /* determine figure of merit from good stamps */
         
@@ -627,7 +533,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
         mcnt3 = 0;
         for (i = 0; i < ntestStamps; i++) {
             
-            getStampSig(&testStamps[i], testKerSol, imNoise, &sig1, &sig2, &sig3);
+            getStampSig(&testStamps[i], testKerSol, imNoise, &sig1, &sig2, &sig3, mRData, rPixX, rPixY, temp);
             
             if ((sig1 != -1) && (sig1 <= MAXVAL)) {
                 m1[mcnt1++] = sig1;
@@ -650,7 +556,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
         
         /* clean up this mess */
         if (testKerSol)	 free(testKerSol);
-        if (testStamps)	 free(testStamps);
+        free(testStamps);
         for (i = 0; i <= mat_size; i++)
             free(matrix[i]);
         for (i = 0; i < nS; i++)
@@ -716,124 +622,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
     return 0;
 }
 
-void build_matrix_new(stamp_struct *stamps, int nS, double **matrix) {
-    /*****************************************************
-     * Build overall matrix including spatial variations
-     *****************************************************/
-    
-    int       mat_size,i,j,pixStamp,istamp,k,i1,i2,j1,j2,ibg,jbg,ivecbg,jj;
-    int       ncomp1, ncomp2, ncomp, nbg_vec;
-    double    **matrix0,p0,q,fx,fy;
-    double    **vec;
-    
-    int ideg1, ideg2, xstamp, ystamp;
-    double a1, a2;
-    
-    ncomp1  = nCompKer - 1;
-    ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
-    ncomp   = ncomp1 * ncomp2;
-    nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
-    pixStamp   = fwKSStamp * fwKSStamp;
-    
-    mat_size = ncomp1 * ncomp2 + nbg_vec + 1;
-    if (verbose >= 2) fprintf(stderr, " Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n",mat_size,ncomp2,ncomp1,nbg_vec);
-    
-    for(i = 0; i <= mat_size; i++)
-        for(j = 0; j <= mat_size; j++)
-            matrix[i][j] = 0.0;
-    
-    for(i = 0; i < nS; i++)
-        for(j = 0; j < ncomp2; j++)
-            wxy[i][j] = 0.0;
-    
-    for (istamp = 0; istamp < nS; istamp++) {
-        /* skip over any bad stamps along the way */
-        while(stamps[istamp].sscnt >= stamps[istamp].nss) { 
-            ++istamp; 
-            if (istamp >= nS) break;
-        }
-        if (istamp >= nS) break;
-        
-        vec    = stamps[istamp].vectors;
-        xstamp = stamps[istamp].xss[stamps[istamp].sscnt];
-        ystamp = stamps[istamp].yss[stamps[istamp].sscnt];
-        
-        /* build weight function *HERE*, implicitly giving bad stamps zero weight */
-        /*   because we skip them over above... */
-        k  = 0;
-        
-        fx = (xstamp - rPixX/2) / rPixX/2; 
-        fy = (ystamp - rPixY/2) / rPixY/2; 
-        
-        for (ideg1 = 0, a1 = 1.0; ideg1 <= kerOrder; ideg1++, a1 *= fx)
-            for (ideg2 = 0, a2 = 1.0; ideg2 <= kerOrder - ideg1; ideg2++, a2 *= fy)
-                wxy[istamp][k++] = a1 * a2;
-        
-        matrix0 = stamps[istamp].mat;
-        for (i = 0; i < ncomp; i++) {
-            i1 = i / ncomp2;
-            i2 = i - i1 * ncomp2;
-            
-            for (j = 0; j <= i; j++) {
-                j1 = j / ncomp2;
-                j2 = j - j1 * ncomp2;
-                
-                /* spatially weighted W_m1 and W_m2 integrals */
-                matrix[i+2][j+2] += wxy[istamp][i2] * wxy[istamp][j2] * matrix0[i1+2][j1+2];
-            }
-        }
-        
-        matrix[1][1] += matrix0[1][1];
-        for (i = 0; i < ncomp; i++) {
-            i1 = i / ncomp2;
-            i2 = i - i1 * ncomp2;
-            matrix[i+2][1] += wxy[istamp][i2] * matrix0[i1+2][1];
-        }
-        
-        for (ibg = 0; ibg < nbg_vec; ibg++) {
-            i = ncomp + ibg + 1;
-            ivecbg = ncomp1 + ibg + 1;
-            for (i1 = 1; i1 < ncomp1 + 1; i1++) { 
-                p0 = 0.0;
-                
-                /* integrate convolved images over all order backgrounds */
-                for (k = 0; k < pixStamp; k++)
-                    p0 += vec[i1][k] * vec[ivecbg][k];
-                
-                /* spatially weighted image * background terms */
-                for (i2 = 0; i2 < ncomp2; i2++) {
-                    jj = (i1 - 1) * ncomp2 + i2 + 1;
-                    matrix[i+1][jj+1] += p0 * wxy[istamp][i2];
-                }
-            }
-            
-            p0 = 0.0;
-            for (k = 0; k < pixStamp; k++)
-                p0 += vec[0][k] * vec[ivecbg][k];
-            matrix[i+1][1] += p0;
-            
-            /* background * background */
-            for (jbg = 0;jbg <= ibg; jbg++) {
-                for (k = 0, q = 0.0; k < pixStamp; k++)
-                    q += vec[ivecbg][k] * vec[ncomp1+jbg+1][k];
-                matrix[i+1][ncomp+jbg+2] += q;
-            }
-        }
-    }
-    
-    /* fill lower half of matrix */
-    for (i = 0; i < mat_size; i++) {
-        for (j = 0; j <= i; j++) {
-            matrix[j+1][i+1] = matrix[i+1][j+1];
-            /* fprintf(stderr, "matrix[%i][%i]: %lf\n", i,j,matrix[i+1][j+1]); */
-        }
-    }
-    
-    return;
-}
-
-void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
+void build_matrix(stamp_struct *stamps, int nS, double **matrix, int rPixX, int rPixY, double **wxy) {
     /*****************************************************
      * Build overall matrix including spatial variations
      *****************************************************/
@@ -950,14 +739,11 @@ void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
     for (i = 0; i < mat_size; i++) {
         for (j = 0; j <= i; j++) {
             matrix[j+1][i+1] = matrix[i+1][j+1];
-            /* fprintf(stderr, "matrix[%i][%i]: %lf\n", i,j,matrix[i+1][j+1]); */
         }
     }
-    
-    return;
 }
 
-void build_scprod(stamp_struct *stamps, int nS, float *image, double *kernelSol) {
+void build_scprod(stamp_struct *stamps, int nS, const float *_image, double *kernelSol, int rPixX, double **wxy) {
     /*****************************************************
      * Build the right side of the complete least squares matrix 
      *****************************************************/
@@ -1007,17 +793,16 @@ void build_scprod(stamp_struct *stamps, int nS, float *image, double *kernelSol)
             for (xc = -hwKSStamp; xc <= hwKSStamp; xc++) {
                 for (yc = -hwKSStamp; yc <= hwKSStamp;yc++) {
                     k  = xc + hwKSStamp + fwKSStamp * (yc + hwKSStamp);
-                    q += vec[ncomp1+ibg+1][k] * image[xc+xi+rPixX*(yc+yi)];
+                    q += vec[ncomp1+ibg+1][k] * _image[xc+xi+rPixX*(yc+yi)];
                     
                 }
             }
             kernelSol[ncomp+ibg+2] += q;
         }
     }
-    return;
 }
 
-void getFinalStampSig(stamp_struct *stamp, float *imDiff, float *imNoise, double *sig) {
+void getFinalStampSig(stamp_struct *stamp, const float *imDiff, const float *imNoise, double *sig, const int *mRData, int rPixX, int rPixY) {
     int i, j, idx, nsig=0;
     int xRegion2, xRegion = stamp->xss[stamp->sscnt];
     int yRegion2, yRegion = stamp->yss[stamp->sscnt];
@@ -1048,11 +833,9 @@ void getFinalStampSig(stamp_struct *stamp, float *imDiff, float *imNoise, double
         *sig /= nsig;
     else
         *sig = -1;
-    
-    return;
 }
 
-void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double *sig1, double *sig2, double *sig3) {
+void getStampSig(stamp_struct *stamp, double *kernelSol, const float *imNoise, double *sig1, double *sig2, double *sig3, int *mRData, int rPixX, int rPixY, float *temp) {
     int i, j, idx, sscnt, nsig, xRegion, yRegion, xRegion2, yRegion2;
     double cSum, cMean, cMedian, cMode, cLfwhm;
     double *im, tdat, idat, ndat, diff, bg;
@@ -1065,9 +848,9 @@ void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double 
     /* the comparison image */
     im = stamp->krefArea;
     /* background from fit */
-    bg = get_background(xRegion, yRegion, kernelSol);
+    bg = get_background(xRegion, yRegion, kernelSol, rPixX, rPixY);
     /* temp contains the convolved image from fit, fwKSStamp x fwKSStamp */
-    make_model(stamp, kernelSol, temp); 
+    make_model(stamp, kernelSol, temp, rPixX, rPixY);
     
     /* get sigma of stamp diff */
     nsig = 0;
@@ -1119,7 +902,7 @@ void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double 
     /* don't do think unless you need to! */
     if (strncmp(figMerit, "v", 1)!=0) {
         if (getStampStats3(temp, xRegion - hwKSStamp, yRegion - hwKSStamp, fwKSStamp, fwKSStamp,
-                           &cSum, &cMean, &cMedian, &cMode, sig2, sig3, &cLfwhm, 0x0, 0xffff, 5)) {
+                           &cSum, &cMean, &cMedian, &cMode, sig2, sig3, &cLfwhm, 0x0, 0xffff, 5, mRData, rPixX, rPixY)) {
             *sig2 = -1;
             *sig3 = -1;
         }
@@ -1129,11 +912,10 @@ void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double 
             *sig3 = -1;
     }
     
-    return;
 }
 
 
-char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *imRef, float *imNoise, double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps) {
+char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *imRef, float *imNoise, double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps, int *mRData, int rPixX, int rPixY, int nS, double *filter_x, double *filter_y, float *temp) {
     /*****************************************************
      * Check for bad stamps after the global fit - iterate if necessary
      *****************************************************/
@@ -1157,7 +939,7 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
         /* if was fit with a good legit substamp */
         if (stamps[istamp].sscnt < stamps[istamp].nss) {
             
-            getStampSig(&stamps[istamp], kernelSol, imNoise, &sig1, &sig2, &sig3);
+            getStampSig(&stamps[istamp], kernelSol, imNoise, &sig1, &sig2, &sig3, mRData, rPixX, rPixY, temp);
             
             if ((strncmp(figMerit, "v", 1)==0 && (sig1 == -1)) ||
                 (strncmp(figMerit, "s", 1)==0 && (sig2 == -1)) ||
@@ -1171,7 +953,7 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
                                         sig, stamps[istamp].sscnt, stamps[istamp].nss);
                 
                 stamps[istamp].sscnt++;
-                fillStamp(&stamps[istamp], imConv, imRef);
+                fillStamp(&stamps[istamp], imConv, imRef, mRData, rPixX, rPixY, filter_x, filter_y, temp);
                 if (verbose>=2) fprintf(stderr, "\n");
                 
                 check = 1;
@@ -1223,7 +1005,7 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
                                         stamps[istamp].sscnt,stamps[istamp].nss);
                 
                 stamps[istamp].sscnt++;
-                scnt += (!(fillStamp(&stamps[istamp], imConv, imRef)));
+                scnt += (!(fillStamp(&stamps[istamp], imConv, imRef, mRData, rPixX, rPixY, filter_x, filter_y, temp)));
                 if (verbose>=2) fprintf(stderr, "\n");
                 
                 check = 1;
@@ -1239,9 +1021,11 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
     return check;
 }
 
-void spatial_convolve(float *image, float **variance, int xSize, int ySize, double *kernelSol, float *cRdata, int *cMask) {
+void
+spatial_convolve(const float *_image, float **variance, int xSize, int ySize, double *kernelSol, float *cRdata, const int *cMask,
+                 int *mRData, int rPixX, int rPixY, double *kernel_coeffs, double *kernel, double **kernel_vec) {
     /*****************************************************
-     * Take image and convolve it using the kernelSol every kernel width
+     * Take _image and convolve it using the kernelSol every kernel width
      *****************************************************/
     
     int       i1,j1,i2,j2,nsteps_x,nsteps_y,i,j,i0,j0,ic,jc,ik,jk,nc,ni,mbit,dovar;
@@ -1261,23 +1045,23 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
     
     nsteps_x = ceil((double)(xSize)/(double)kcStep);
     nsteps_y = ceil((double)(ySize)/(double)kcStep);
-    
+
     for (j1 = 0; j1 < nsteps_y; j1++) {
         j0 = j1 * kcStep + hwKernel;
         
         for(i1 = 0; i1 < nsteps_x; i1++) {
             i0 = i1 * kcStep + hwKernel;
             
-            make_kernel(i0 + hwKernel, j0 + hwKernel, kernelSol);
-            
+            make_kernel(i0 + hwKernel, j0 + hwKernel, kernelSol, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
+
             for (j2 = 0; j2 < kcStep; j2++) {
                 j = j0 + j2;
                 if ( j >= ySize - hwKernel) break;
-                
+
                 for (i2 = 0; i2 < kcStep; i2++) {
                     i = i0 + i2;
                     if (i >= xSize - hwKernel) break;
-                    
+
                     ni = i+xSize*j;
                     qv = q = aks = uks = 0.0;
                     mbit = 0x0;
@@ -1290,14 +1074,14 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
                             nc = ic+xSize*jc;
                             kk = kernel[ik+jk*fwKernel];
                             
-                            q     += image[nc] * kk;
+                            q     += _image[nc] * kk;
                             if (dovar) {
                                 if (convolveVariance)
                                     qv += (*variance)[nc] * kk;
                                 else
                                     qv += (*variance)[nc] * kk * kk;			   
                             }
-                            
+
                             mbit  |= cMask[nc];
                             aks   += fabs(kk);
                             if (!(cMask[nc] & FLAG_INPUT_ISBAD)) {
@@ -1305,17 +1089,16 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
                             }
                         }
                     }
-                    
+
                     cRdata[ni]   = q;
                     if (dovar)
                         vData[ni] = qv;
-                    
+
                     /* mask propagation changed in 5.1.9 */
                     /* mRData[ni]  |= mbit; */ 
                     /* mRData[ni]  |= FLAG_OK_CONV      * (mbit > 0);*/
                     mRData[ni]  |= cMask[ni];
                     mRData[ni]  |= FLAG_OUTPUT_ISBAD * ((cMask[ni] & FLAG_INPUT_ISBAD) > 0);
-                    
                     if (mbit) {
                         if ((uks / aks) < kerFracMask) {
                             mRData[ni] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
@@ -1333,10 +1116,9 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
         free(*variance);
         *variance = vData;
     }
-    return;
 }
 
-double make_kernel(int xi, int yi, double *kernelSol) {
+double make_kernel(int xi, int yi, const double *kernelSol, int rPixX, int rPixY, double *kernel_coeffs, double *kernel, double **kernel_vec) {
     /*****************************************************
      * Create the appropriate kernel at xi, yi, return sum
      *****************************************************/
@@ -1344,7 +1126,7 @@ double make_kernel(int xi, int yi, double *kernelSol) {
     int    i1,k,ix,iy,i;
     double ax,ay,sum_kernel;
     double xf, yf;
-    
+
     k  = 2;
     /* RANGE FROM -1 to 1 */
     xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
@@ -1377,7 +1159,7 @@ double make_kernel(int xi, int yi, double *kernelSol) {
     return sum_kernel;
 }
 
-double get_background(int xi, int yi, double *kernelSol) {
+double get_background(int xi, int yi, const double *kernelSol, int rPixX, int rPixY) {
     /*****************************************************
      * Return background value at xi, yi
      *****************************************************/
@@ -1399,7 +1181,6 @@ double get_background(int xi, int yi, double *kernelSol) {
         ay = 1.0; 
         for (j = 0; j <= bgOrder - i; j++) {
             background += kernelSol[ncompBG+k++] * ax * ay;
-            /* fprintf(stderr, "bg: %d %d %d %d %f %f %f\n", xi, yi, i, j, ax, ay, kernelSol[ncompBG+k-1]); */
             ay *= yf;
         }
         ax *= xf;
@@ -1407,7 +1188,7 @@ double get_background(int xi, int yi, double *kernelSol) {
     return background;
 }
 
-void make_model(stamp_struct *stamp, double *kernelSol, float *csModel) {
+void make_model(stamp_struct *stamp, const double *kernelSol, float *csModel, int rPixX, int rPixY) {
     /*****************************************************
      * Create a model of the convolved image
      *****************************************************/
@@ -1415,12 +1196,8 @@ void make_model(stamp_struct *stamp, double *kernelSol, float *csModel) {
     int       i1,k,ix,iy,i,xi,yi;
     double    ax,ay,coeff;
     double    *vector;
-    float     rPixX2, rPixY2;
     double    xf, yf;
-    
-    rPixX2   = 0.5 * rPixX;
-    rPixY2   = 0.5 * rPixY;
-    
+
     xi = stamp->xss[stamp->sscnt];
     yi = stamp->yss[stamp->sscnt];
     
@@ -1452,7 +1229,6 @@ void make_model(stamp_struct *stamp, double *kernelSol, float *csModel) {
             csModel[i] += coeff*vector[i];
         }
     }
-    return;
 }
 
 int ludcmp(double **a, int n, int *indx, double *d)
@@ -1460,9 +1236,8 @@ int ludcmp(double **a, int n, int *indx, double *d)
 {
     int     i,imax=0,j,k;
     double  big,dum,sum,temp2;
-    double  *vv,*lvector();
-    void    lnrerror();
-    
+    double  *vv;
+
     vv=(double *)malloc((n+1)*sizeof(double));
     
     *d=1.0;
@@ -1471,17 +1246,9 @@ int ludcmp(double **a, int n, int *indx, double *d)
         for (j=1;j<=n;j++)
             if ((temp2=fabs(a[i][j])) > big) big=temp2;
         if (big == 0.) {
-            fprintf(stderr," Numerical Recipies run error....");
+            fprintf(stderr," Numerical Recipes run error....");
             fprintf(stderr,"Singular matrix in routine LUDCMP\n");
             fprintf(stderr,"Goodbye ! \n");
-            
-            /*
-              for (i = 1; i <= n; i++) {
-              for (j = 1; j <= n; j++) {
-              fprintf(stderr, "%d %d %f\n", i, j, a[i][j]);
-              }
-              }
-            */
             return (1);
         }
         vv[i]=1.0/big;
@@ -1523,7 +1290,7 @@ int ludcmp(double **a, int n, int *indx, double *d)
     return 0;
 }
 
-void lubksb(double **a, int n, int *indx, double  *b)
+void lubksb(double **a, int n, const int *indx, double  *b)
 {
     int i,ii=0,ip,j;
     double  sum;

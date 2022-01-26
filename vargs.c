@@ -2,11 +2,11 @@
 #include<string.h>
 #include<strings.h>
 #include<stdlib.h>
-#include<assert.h>
 
 #include "defaults.h"
 #include "globals.h"
 #include "functions.h"
+#include "fitsio.h"
 
 /*
   
@@ -19,11 +19,8 @@
 
 void vargs(int argc, char *argv[]) {
 
-    int iarg, i, status = 0;
-    char help[8192], *scrStr;
-    fitsfile *kPtr;
-    int kBitpix, kNaxis;
-    long kNaxes[MAXDIM];
+    int iarg, i;
+    char help[8192];
 
     /* set the defaults */
     image = NULL;
@@ -37,20 +34,6 @@ void vargs(int argc, char *argv[]) {
     kernelImIn = NULL;
     kernelImOut = NULL;
     outMask = NULL;
-
-    /* nullify arrays of pointers */
-    mRData = NULL;
-
-    check_stack = NULL;
-    filter_x = NULL;
-    filter_y = NULL;
-    temp = NULL;
-    kernel_vec = NULL;
-    wxy = NULL;
-    kernel_coeffs = NULL;
-    kernel = NULL;
-    check_mat = NULL;
-    check_vec = NULL;
 
     ngauss = D_NGAUSS;
     deg_fixe = (int *) calloc(ngauss, sizeof(int));
@@ -85,7 +68,6 @@ void vargs(int argc, char *argv[]) {
     tPedestal = D_PEDESTAL;
     iPedestal = D_PEDESTAL;
     hwKernel = D_HWKERNEL;
-    fwKernelPCA = 2 * D_HWKERNEL + 1;
     kerFitThresh = D_KFITTHRESH;
     minFracGoodStamps = D_NFITTHRESH;
     scaleFitThresh = D_SFITTHRESH;
@@ -112,7 +94,6 @@ void vargs(int argc, char *argv[]) {
     figMerit = D_FIGMERIT;
     fillVal = D_FILL;
     fillValNoise = D_FILLNOISE;
-    doSum = D_OUTSUM;
     inclNoiseImage = D_NOILAYER;
     inclSigmaImage = D_SIGLAYER;
     inclConvImage = D_CONVLAYER;
@@ -125,7 +106,6 @@ void vargs(int argc, char *argv[]) {
     verbose = D_VERBOSE;
 
     convolveVariance = D_CONVVAR;
-    usePCA = D_USEPCA;
 
     nThread = D_NTHREAD;
 
@@ -171,9 +151,6 @@ void vargs(int argc, char *argv[]) {
             kfSpreadMask2);
     sprintf(help, "%s   [-omi  fitsfile]  : Output bad pixel mask (undef)\n", help);
 
-    sprintf(help, "%s   [-gd xmin xmax ymin ymax]\n", help);
-    sprintf(help, "%s                     : only use subsection of full image (full image)\n\n", help);
-
     sprintf(help, "%s   [-nrx xregion]    : number of image regions in x dimension (%d)\n", help, nRegX);
     sprintf(help, "%s   [-nry yregion]    : number of image regions in y dimension (%d)\n", help, nRegY);
     sprintf(help, "%s   -- OR --\n", help);
@@ -200,8 +177,6 @@ void vargs(int argc, char *argv[]) {
             photNormalize);
     sprintf(help, "%s   [-fom figmerit]   : (v)ariance, (s)igma or (h)istogram convolution merit (%s)\n", help,
             figMerit);
-    sprintf(help, "%s   [-sconv]          : all regions convolved in same direction (%d)\n", help, sameConv);
-
     sprintf(help, "%s   [-ko kernelorder] : spatial order of kernel variation within region (%d)\n", help, kerOrder);
     sprintf(help, "%s   [-bgo bgorder]    : spatial order of background variation within region (%d)\n", help, bgOrder);
     sprintf(help, "%s   [-ssig statsig]   : threshold for sigma clipping statistics  (%.1f)\n", help, statSig);
@@ -245,13 +220,6 @@ void vargs(int argc, char *argv[]) {
     sprintf(help, "%s                     : N = 0 .. ngauss - 1\n\n", help);
     sprintf(help, "%s                     : (%d %d %.2f %d %.2f %d %.2f\n", help, ngauss, D_DEG_GAUSS1, D_SIG_GAUSS1,
             D_DEG_GAUSS2, D_SIG_GAUSS2, D_DEG_GAUSS3, D_SIG_GAUSS3);
-
-    sprintf(help, "%s   [-pca nk k0.fits ... n(k-1).fits]\n", help);
-    sprintf(help, "%s                     : nk      = number of input basis functions\n", help);
-    sprintf(help, "%s                     : k?.fits = name of fitsfile holding basis function\n", help);
-    sprintf(help, "%s                     : Since this uses input basis functions, it will fix :\n", help);
-    sprintf(help, "%s                     :    hwKernel \n", help);
-    sprintf(help, "%s                     :    \\nn", help);
 
     sprintf(help, "%s   [-nt numthread]   : number of threads to use (%d) - this will be limited to nrx*nry\n\n", help, D_NTHREAD);
 
@@ -335,11 +303,6 @@ void vargs(int argc, char *argv[]) {
                 sscanf(argv[++iarg], "%f", &kfSpreadMask2);
             } else if (strcasecmp(argv[iarg] + 1, "omi") == 0) {
                 outMask = argv[++iarg];
-            } else if (strcasecmp(argv[iarg] + 1, "gd") == 0) {
-                sscanf(argv[++iarg], "%d", &gdXmin);
-                sscanf(argv[++iarg], "%d", &gdXmax);
-                sscanf(argv[++iarg], "%d", &gdYmin);
-                sscanf(argv[++iarg], "%d", &gdYmax);
             } else if (strcasecmp(argv[iarg] + 1, "nrx") == 0) {
                 sscanf(argv[++iarg], "%d", &nRegX);
             } else if (strcasecmp(argv[iarg] + 1, "nry") == 0) {
@@ -382,14 +345,8 @@ void vargs(int argc, char *argv[]) {
                 photNormalize = argv[++iarg];
             } else if (strcasecmp(argv[iarg] + 1, "fom") == 0) {
                 figMerit = argv[++iarg];
-            } else if (strcasecmp(argv[iarg] + 1, "sconv") == 0) {
-                sameConv = 1;
             } else if (strcasecmp(argv[iarg] + 1, "fi") == 0) {
                 sscanf(argv[++iarg], "%f", &fillVal);
-            } else if (strcasecmp(argv[iarg] + 1, "ef") == 0) {
-                effFile = argv[++iarg];
-            } else if (strcasecmp(argv[iarg] + 1, "sum") == 0) {
-                doSum = 1;
             } else if (strcasecmp(argv[iarg] + 1, "oni") == 0) {
                 noiseImage = argv[++iarg];
             } else if (strcasecmp(argv[iarg] + 1, "ond") == 0) {
@@ -444,39 +401,6 @@ void vargs(int argc, char *argv[]) {
                     sscanf(argv[++iarg], "%f", &sigma_gauss[i]);
                     sigma_gauss[i] = (1.0 / (2.0 * sigma_gauss[i] * sigma_gauss[i]));
                 }
-            } else if (strcasecmp(argv[iarg] + 1, "pca") == 0) {
-                usePCA = 1;
-                sscanf(argv[++iarg], "%d", &ngauss); /* effectively ngauss... */
-
-                PCA = (float **) malloc(ngauss * sizeof(float *));
-                for (i = 0; i < ngauss; i++) {
-                    scrStr = argv[++iarg];
-
-                    if (fits_open_file(&kPtr, scrStr, 0, &status) ||
-                        fits_get_img_param(kPtr, MAXDIM, &kBitpix, &kNaxis, kNaxes, &status))
-                        printError(status);
-
-                    assert (kNaxes[0] == kNaxes[1]); /* square */
-                    if (fwKernelPCA == (2 * D_HWKERNEL + 1))
-                        fwKernelPCA = kNaxes[0];
-                    else
-                        assert(fwKernelPCA == kNaxes[0]);
-
-                    fprintf(stderr, "   Reading in basis image %s\n", scrStr);
-
-                    PCA[i] = (float *) malloc(kNaxes[0] * kNaxes[1] * sizeof(float));
-                    if (fits_read_img_flt(kPtr, 0, 1, kNaxes[0] * kNaxes[1], 0, PCA[i], 0, &status) ||
-                        fits_close_file(kPtr, &status))
-                        printError(status);
-                }
-
-                /* hack to not break other parts of the code */
-                deg_fixe = (int *) realloc(deg_fixe, ngauss * sizeof(int));
-                sigma_gauss = (float *) realloc(sigma_gauss, ngauss * sizeof(float));
-                for (i = 0; i < ngauss; i++) {
-                    deg_fixe[i] = 0;
-                    sigma_gauss[i] = -1;
-                }
             } else if (strcasecmp(argv[iarg] + 1, "nt") == 0) {
                 sscanf(argv[++iarg], "%d", &nThread);
             } else {
@@ -507,6 +431,13 @@ void vargs(int argc, char *argv[]) {
     }
     if (!(outim)) {
         fprintf(stderr, "FATAL ERROR outim : required command line option\n");
+        exit(1);
+    }
+
+    /* can only use threads if cfitsio was compiled to be thread safe */
+    // TODO Only raise if nThread > 1 - this relies on making main.c not use threads if nThread = 1
+    if ((fits_is_reentrant() != 1)) {
+        fprintf(stderr, "FATAL ERROR cfitsio was not compiled to be thread-safe (requires the `--enable-reentrant` argument on configuration)\n");
         exit(1);
     }
 
@@ -578,12 +509,6 @@ void vargs(int argc, char *argv[]) {
     /* masking pars */
     if (kfSpreadMask1 < 0) {
         fprintf(stderr, "FATAL ERROR mins (%f) : cannot be negative\n", kfSpreadMask1);
-        exit(1);
-    }
-
-    /* asking for subsections of image */
-    if ((gdXmin < 0) || (gdXmax < 0) || (gdXmin > gdXmax) || (gdYmin < 0) || (gdYmax < 0) || (gdYmin > gdYmax)) {
-        fprintf(stderr, "FATAL ERROR gd : (%d,%d) < x,y < (%d,%d)\n", gdXmin, gdYmin, gdXmax, gdYmax);
         exit(1);
     }
 
@@ -659,12 +584,4 @@ void vargs(int argc, char *argv[]) {
         fprintf(stderr, "FATAL ERROR nbs (%f) : cannot be zero\n", outNiBscale);
         exit(1);
     }
-
-    /* PCA */
-    if (usePCA) {
-        hwKernel = fwKernelPCA / 2;
-        fprintf(stderr, "ATTN : size of input kernel images fixes hwKernel to %d\n", hwKernel);
-    }
-
-    return;
 }
