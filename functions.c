@@ -493,7 +493,8 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
     return dmax2;
 }
 
-int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double hiThresh, int bbit1, int bbit2, int *mRData, int rPixX, int rPixY) {
+int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double hiThresh,
+                  int bbit1, int bbit2, int *mRData, int rPixX, int rPixY) {
     /*****************************************************
      * Find the X highest independent maxima in the stamp
      *   Subject to some stringent cuts
@@ -708,7 +709,8 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
 }
 
 
-void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int umask, int smask, int *mRData, int rPixX, int rPixY) {
+void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int umask,
+                    int smask, int *mRData, int rPixX, int rPixY) {
     /*
       good pixels : umask=0,      smask=0xffff
       ok   pixels : umask=0xff,   smask=0x8000
@@ -1454,9 +1456,10 @@ void hp_fits_correct_data_int(int *data, int npix, float bZero, float bScale, in
 }
 
 int hp_fits_write_subset(fitsfile *fptr, long group, long naxis, long *naxes,
-                         float *data, int *status, int makeShort,
-                         float bZero, float bScale,
-                         int fpixelX, int fpixelY, int lpixelX, int lpixelY, int xArrayLo, int yArrayLo, int *mRData, int rPixX, int rPixY) {
+                         float *data, int *status, int makeShort, float bZero,
+                         float bScale, int fpixelX, int fpixelY, int lpixelX,
+                         int lpixelY, int xArrayLo, int yArrayLo, int *mRData,
+                         int rPixX, int rPixY) {
 
     int pixY, y, x;
     float *dptr;
@@ -1492,9 +1495,10 @@ int hp_fits_write_subset(fitsfile *fptr, long group, long naxis, long *naxes,
 }
 
 int hp_fits_write_subset_int(fitsfile *fptr, long group, long naxis, long *naxes,
-                             int *data, int *status, int makeShort,
-                             float bZero, float bScale,
-                             int fpixelX, int fpixelY, int lpixelX, int lpixelY, int xArrayLo, int yArrayLo, int *mRData, int rPixX, int rPixY) {
+                             int *data, int *status, int makeShort, float bZero,
+                             float bScale, int fpixelX, int fpixelY, int lpixelX,
+                             int lpixelY, int xArrayLo, int yArrayLo, int *mRData,
+                             int rPixX, int rPixY) {
 
     int pixY, y, x;
     int *dptr;

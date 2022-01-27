@@ -221,7 +221,8 @@ void vargs(int argc, char *argv[]) {
     sprintf(help, "%s                     : (%d %d %.2f %d %.2f %d %.2f\n", help, ngauss, D_DEG_GAUSS1, D_SIG_GAUSS1,
             D_DEG_GAUSS2, D_SIG_GAUSS2, D_DEG_GAUSS3, D_SIG_GAUSS3);
 
-    sprintf(help, "%s   [-nt numthread]   : number of threads to use (%d) - this will be limited to nrx*nry\n\n", help, D_NTHREAD);
+    sprintf(help, "%s   [-nt numthread]   : number of threads to use (%d) - this will be limited to nrx*nry\n\n", help,
+            D_NTHREAD);
 
     sprintf(help, "%s   [-v] verbosity    : level of verbosity, 0-2 (%d)\n", help, verbose);
 
@@ -441,7 +442,9 @@ void vargs(int argc, char *argv[]) {
     }
     /* can only use threads if cfitsio was compiled to be thread safe */
     if ((fits_is_reentrant() != 1) && nThread > 1) {
-        fprintf(stderr, "FATAL ERROR nt (%d) : number of threads > 1 and cfitsio not compiled to be thread-safe (requires the `--enable-reentrant` argument on configuration)\n", nThread);
+        fprintf(stderr,
+                "FATAL ERROR nt (%d) : number of threads > 1 and cfitsio not compiled to be thread-safe (requires the `--enable-reentrant` argument on configuration)\n",
+                nThread);
         exit(1);
     }
     /* no point having more threads than regions */

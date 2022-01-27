@@ -16,14 +16,14 @@
 pthread_mutex_t writelock = PTHREAD_MUTEX_INITIALIZER;
 
 struct RegionData {
-int regNum, nR;
-int xMin, yMin, xMax, yMax;
-long tNaxes[MAXDIM];
-long iNaxes[MAXDIM];
-long oNaxes[MAXDIM];
-int tNaxis, iNaxis;
-int rXMin, rYMin, rXMax, rYMax;
-int kInfoNum;
+    int regNum, nR;
+    int xMin, yMin, xMax, yMax;
+    long tNaxes[MAXDIM];
+    long iNaxes[MAXDIM];
+    long oNaxes[MAXDIM];
+    int tNaxis, iNaxis;
+    int rXMin, rYMin, rXMax, rYMax;
+    int kInfoNum;
 };
 
 void processRegion(void *voidData) {
@@ -100,7 +100,7 @@ void processRegion(void *voidData) {
 
 
     int buffer_size;                        /* the buffer_size to use, depending on number of regions */
-    int       rPixX, rPixY;
+    int rPixX, rPixY;
 
     /* cfitsio */
     long pixMin[2], pixMax[2];
@@ -151,8 +151,8 @@ void processRegion(void *voidData) {
     }
     for (j = 0; j < nC; j++)
         if (!(check_mat[j] = (double *) calloc(nC, sizeof(double)))) {
-        exit(1);
-    }
+            exit(1);
+        }
 
     /* start processing  region */
     if (kernelImIn) {
@@ -502,7 +502,8 @@ void processRegion(void *voidData) {
                 /* start over... */
                 regKerFitThresh *= scaleFitThresh;
 
-                fprintf(stderr, "[Region %d] Too few stamps were fit, scaling down fitting threshold to %.2f\n", i, regKerFitThresh);
+                fprintf(stderr, "[Region %d] Too few stamps were fit, scaling down fitting threshold to %.2f\n", i,
+                        regKerFitThresh);
 
                 if (ctStamps) {
                     freeStampMem(ctStamps, nStamps);
@@ -583,7 +584,8 @@ void processRegion(void *voidData) {
             }
             if ((strncmp(forceConvolve, "b", 1) == 0)) {
                 fprintf(stderr, "\n\n[Region %d] Trying to convolve the TEMPLATE to fit IMAGE\n", i);
-                tMerit = check_stamps(ctStamps, ntS, iRData, oRData, mRData, rPixX, rPixY, check_mat, check_vec, check_stack, wxy, kernel_coeffs, kernel, kernel_vec, indx, temp);
+                tMerit = check_stamps(ctStamps, ntS, iRData, oRData, mRData, rPixX, rPixY, check_mat, check_vec,
+                                      check_stack, wxy, kernel_coeffs, kernel, kernel_vec, indx, temp);
                 fprintf(stderr, "[Region %d]     Result : merit = %.3f\n", i, tMerit);
             } else
                 tMerit = iMerit = 0;
@@ -598,7 +600,8 @@ void processRegion(void *voidData) {
             }
             if ((strncmp(forceConvolve, "b", 1) == 0)) {
                 fprintf(stderr, "\n\n[Region %d] Trying to convolve the IMAGE to fit TEMPLATE \n", i);
-                iMerit = check_stamps(ciStamps, niS, tRData, oRData, mRData, rPixX, rPixY, check_mat, check_vec, check_stack, wxy, kernel_coeffs, kernel, kernel_vec, indx, temp);
+                iMerit = check_stamps(ciStamps, niS, tRData, oRData, mRData, rPixX, rPixY, check_mat, check_vec,
+                                      check_stack, wxy, kernel_coeffs, kernel, kernel_vec, indx, temp);
                 fprintf(stderr, "[Region %d]     Result : merit = %.3f\n", i, iMerit);
             } else
                 iMerit = tMerit = 0;
@@ -675,7 +678,8 @@ void processRegion(void *voidData) {
         /* spatial_convolve effectively spreads the input mtsRData mask into global mRData output mask!  bitwise... */
         fprintf(stderr, "\n[Region %d] Convolving...\n", i);
 
-        spatial_convolve(tRData, &eRData, rPixX, rPixY, tKerSol, oRData, mtsRData, mRData, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
+        spatial_convolve(tRData, &eRData, rPixX, rPixY, tKerSol, oRData, mtsRData, mRData, rPixX, rPixY, kernel_coeffs,
+                         kernel, kernel_vec);
 
         /* correct for background */
         for (l = hwKernel; l < rPixY - hwKernel; l++)
@@ -785,7 +789,8 @@ void processRegion(void *voidData) {
 
         /* spatial_convolve effectively spreads the input misRData mask into global mRData output mask!  bitwise... */
         fprintf(stderr, "\n[Region %d]  Convolving...\n", i);
-        spatial_convolve(iRData, &eRData, rPixX, rPixY, iKerSol, oRData, misRData, mRData, rPixX, rPixY, kernel_coeffs, kernel, kernel_vec);
+        spatial_convolve(iRData, &eRData, rPixX, rPixY, iKerSol, oRData, misRData, mRData, rPixX, rPixY, kernel_coeffs,
+                         kernel, kernel_vec);
 
         /* correct for background */
         for (l = hwKernel; l < rPixY - hwKernel; l++)
@@ -879,9 +884,9 @@ void processRegion(void *voidData) {
     inv1 = 1. / sumKernel;
 
     /* take a lock around all write operations to prevent multi-thread access to fits files */
-    fprintf(stderr,"[Region %d] Acquiring writing lock\n", i);
+    fprintf(stderr, "[Region %d] Acquiring writing lock\n", i);
     pthread_mutex_lock(&writelock);
-    fprintf(stderr,"[Region %d] Acquired writing lock\n", i);
+    fprintf(stderr, "[Region %d] Acquired writing lock\n", i);
 
     /* open up output image */
     if (fits_open_file(&oPtr, outim, 1, &status))
@@ -970,7 +975,8 @@ void processRegion(void *voidData) {
                 }
                 /* save the mean and scatter so that it can be saved in the fits header */
                 sigma_clip(temp2, k, &meansigSubstampsF, &scatterSubstampsF, 10);
-                fprintf(stderr, "[Region %d]   FINAL Mean sig: %6.3f stdev: %6.3f\n", i, meansigSubstampsF, scatterSubstampsF);
+                fprintf(stderr, "[Region %d]   FINAL Mean sig: %6.3f stdev: %6.3f\n", i, meansigSubstampsF,
+                        scatterSubstampsF);
                 free(temp2);
             }
         }
@@ -1008,7 +1014,8 @@ void processRegion(void *voidData) {
                 }
                 /* save the mean and scatter so that it can be saved in the fits header */
                 sigma_clip(temp2, k, &meansigSubstampsF, &scatterSubstampsF, 10);
-                fprintf(stderr, "[Region %d]    FINAL Mean sig: %6.3f stdev: %6.3f\n", i, meansigSubstampsF, scatterSubstampsF);
+                fprintf(stderr, "[Region %d]    FINAL Mean sig: %6.3f stdev: %6.3f\n", i, meansigSubstampsF,
+                        scatterSubstampsF);
                 free(temp2);
             }
         }
@@ -1384,7 +1391,7 @@ void processRegion(void *voidData) {
     }
 
     /* release the lock around all write operations to prevent multi-thread access to fits files */
-    fprintf(stderr,"[Region %d] Releasing writing lock\n", i);
+    fprintf(stderr, "[Region %d] Releasing writing lock\n", i);
     pthread_mutex_unlock(&writelock);
 
     /* free things now we're done with them */
@@ -1437,7 +1444,6 @@ void processRegion(void *voidData) {
     fprintf(stderr, "[Region %i] Finished\n\n", i);
 
 }
-
 
 
 int main(int argc, char *argv[]) {
@@ -1950,25 +1956,25 @@ int main(int argc, char *argv[]) {
     }
 
     struct RegionData regData[nR];
-    for (i=0; i<nR; i++) {
-        regData[i].regNum=i;
-        regData[i].nR=nR;
-        regData[i].xMin=xMin;
-        regData[i].yMin=yMin;
-        regData[i].xMax=xMax;
-        regData[i].yMax=yMax;
+    for (i = 0; i < nR; i++) {
+        regData[i].regNum = i;
+        regData[i].nR = nR;
+        regData[i].xMin = xMin;
+        regData[i].yMin = yMin;
+        regData[i].xMax = xMax;
+        regData[i].yMax = yMax;
         for (int ii = 0; ii < MAXDIM; ii++) {
             regData[i].tNaxes[ii] = tNaxes[ii];
             regData[i].iNaxes[ii] = iNaxes[ii];
             regData[i].oNaxes[ii] = oNaxes[ii];
         }
-        regData[i].tNaxis=tNaxis;
-        regData[i].iNaxis=iNaxis;
+        regData[i].tNaxis = tNaxis;
+        regData[i].iNaxis = iNaxis;
         regData[i].rXMin = rXMins[i];
         regData[i].rYMin = rYMins[i];
         regData[i].rXMax = rXMaxs[i];
         regData[i].rYMax = rYMaxs[i];
-        regData[i].kInfoNum=kInfoNum;
+        regData[i].kInfoNum = kInfoNum;
     }
 
     if (nThread == 1) {
@@ -1981,7 +1987,7 @@ int main(int argc, char *argv[]) {
         threadpool thpool = thpool_init(nThread);
         /* add work for the threads */
         for (i = 0; i < nR; i++) {
-            thpool_add_work(thpool, processRegion,  &regData[i]);
+            thpool_add_work(thpool, processRegion, &regData[i]);
         }
         /* wait for them to complete */
         thpool_wait(thpool);
