@@ -46,7 +46,7 @@ char      *forceConvolve, *photNormalize, *figMerit;
 int       rescaleOK;
 float     fillVal, fillValNoise;
 char      *noiseImage, *sigmaImage, *convImage;
-int       inclNoiseImage, inclSigmaImage, inclConvImage, noClobber;
+int       inclNoiseImage, inclSigmaImage, inclConvImage, inclMaskImage, noClobber;
 int       doKerInfo, outShort, outNShort;
 float     outBzero, outBscale, outNiBzero, outNiBscale;
 int       convolveVariance;

@@ -1245,6 +1245,20 @@ void processRegion(void *voidData) {
             printError(status);
     }
 
+    if (inclMaskImage) {
+        if (fits_movrel_hdu(oPtr, 1, NULL, &status))
+            printError(status);
+
+        if (hp_fits_write_subset_int(oPtr, 0, 2, oNaxes, mRData, &status,
+                                     1, 32768, 1, fpixelOutX, fpixelOutY,
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY))
+            printError(status);
+        /* reset output stream */
+        if (fits_write_key_str(oPtr, hKeyword, hInfo, "", &status) ||
+            fits_set_bscale(oPtr, outBscale, outBzero, &status))
+            printError(status);
+    }
+
     /* add fits header info */
     fits_movabs_hdu(oPtr, 1, NULL, &status);
 
@@ -1720,6 +1734,21 @@ int main(int argc, char *argv[]) {
                 printError(status);
         }
     }
+
+    if (inclMaskImage) {
+        if (fits_insert_img(oPtr, SHORT_IMG, 2, oNaxes, &status))
+            printError(status);
+        if (fits_update_key(oPtr, TSTRING, "OBJECT", "Pixel mask image", "", &status) ||
+            fits_update_key(oPtr, TSTRING, "EXTNAME", "MASK_IMAGE", "", &status))
+            printError(status);
+
+        if (fits_update_key_flt(oPtr, "BZERO", 32768, -5, "", &status) ||
+            fits_update_key_flt(oPtr, "BSCALE", 1, -5, "", &status))
+            printError(status);
+
+    }
+
+
     if (noiseImage) {
         if (!noClobber) { sprintf(scrStr, "!%s", noiseImage); }
         else { sprintf(scrStr, "%s", noiseImage); }
