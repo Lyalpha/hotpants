@@ -1245,6 +1245,20 @@ void processRegion(void *voidData) {
             printError(status);
     }
 
+    if (inclMaskImage) {
+        if (fits_movrel_hdu(oPtr, 1, NULL, &status))
+            printError(status);
+
+        if (hp_fits_write_subset_int(oPtr, 0, 2, oNaxes, mRData, &status,
+                                     1, 32768, 1, fpixelOutX, fpixelOutY,
+                                     lpixelOutX, lpixelOutY, xBufLo, yBufLo, mRData, rPixX, rPixY))
+            printError(status);
+        /* reset output stream */
+        if (fits_write_key_str(oPtr, hKeyword, hInfo, "", &status) ||
+            fits_set_bscale(oPtr, outBscale, outBzero, &status))
+            printError(status);
+    }
+
     /* add fits header info */
     fits_movabs_hdu(oPtr, 1, NULL, &status);
 
@@ -1666,7 +1680,8 @@ int main(int argc, char *argv[]) {
     /* make new image extensions for any extraneous output data */
     if (inclConvImage) {
         if (fits_insert_img(oPtr, oBitpix, oNaxis, oNaxes, &status) ||
-            fits_update_key(oPtr, TSTRING, "OBJECT", "Convolved Image", "", &status))
+            fits_update_key(oPtr, TSTRING, "OBJECT", "Convolved Image", "", &status) ||
+            fits_update_key(ePtr, TSTRING, "EXTNAME", "IMAGE_CONV", "", &status))
             printError(status);
     }
     if (convImage) {
@@ -1676,13 +1691,15 @@ int main(int argc, char *argv[]) {
             fits_create_img(ePtr, oBitpix, oNaxis, oNaxes, &status) ||
             hp_fits_copy_header(iPtr, ePtr, &status) ||
             fits_update_key(ePtr, TSTRING, "OBJECT", "Convolved Image", "", &status) ||
+            fits_update_key(ePtr, TSTRING, "EXTNAME", "IMAGE_CONV", "", &status) ||
             fits_close_file(ePtr, &status))
             printError(status);
     }
 
     if (inclSigmaImage) {
         if (fits_insert_img(oPtr, oBitpix, 2, oNaxes, &status) ||
-            fits_update_key(oPtr, TSTRING, "OBJECT", "Noise-scaled (sigma) Difference Image", "", &status))
+            fits_update_key(oPtr, TSTRING, "OBJECT", "Noise-scaled (sigma) Difference Image", "", &status) ||
+            fits_update_key(ePtr, TSTRING, "EXTNAME", "RMS_IMAGE_SCALED", "", &status))
             printError(status);
     }
     if (sigmaImage) {
@@ -1692,6 +1709,7 @@ int main(int argc, char *argv[]) {
             fits_create_img(ePtr, oBitpix, oNaxis, oNaxes, &status) ||
             hp_fits_copy_header(iPtr, ePtr, &status) ||
             fits_update_key(ePtr, TSTRING, "OBJECT", "Noise-scaled (sigma) Difference Image", "", &status) ||
+            fits_update_key(ePtr, TSTRING, "EXTNAME", "RMS_IMAGE_SCALED", "", &status) ||
             fits_close_file(ePtr, &status))
             printError(status);
     }
@@ -1706,6 +1724,8 @@ int main(int argc, char *argv[]) {
         }
         if (fits_update_key(oPtr, TSTRING, "OBJECT", "HOTPanTS Noise Image", "", &status))
             printError(status);
+        if (fits_update_key(oPtr, TSTRING, "EXTNAME", "RMS_IMAGE", "", &status))
+            printError(status);
 
         /* manually set bscale and bzero for noise image layer */
         if (outNShort) {
@@ -1714,6 +1734,21 @@ int main(int argc, char *argv[]) {
                 printError(status);
         }
     }
+
+    if (inclMaskImage) {
+        if (fits_insert_img(oPtr, SHORT_IMG, 2, oNaxes, &status))
+            printError(status);
+        if (fits_update_key(oPtr, TSTRING, "OBJECT", "Pixel mask image", "", &status) ||
+            fits_update_key(oPtr, TSTRING, "EXTNAME", "MASK_IMAGE", "", &status))
+            printError(status);
+
+        if (fits_update_key_flt(oPtr, "BZERO", 32768, -5, "", &status) ||
+            fits_update_key_flt(oPtr, "BSCALE", 1, -5, "", &status))
+            printError(status);
+
+    }
+
+
     if (noiseImage) {
         if (!noClobber) { sprintf(scrStr, "!%s", noiseImage); }
         else { sprintf(scrStr, "%s", noiseImage); }
@@ -1733,7 +1768,8 @@ int main(int argc, char *argv[]) {
             fits_update_key(ePtr, TSTRING, "OBJECT", "HOTPanTS Noise Image", "", &status) ||
             fits_update_key_flt(ePtr, "GAIN", 1., -1, "No gain in noise image", &status) ||
             fits_update_key_flt(ePtr, "RDNOISE", 0., -1, "No rdnoise in noise image", &status) ||
-            fits_write_key_flt(ePtr, "MASKVAL", fillValNoise, -6, "Value of Masked Pixels", &status))
+            fits_write_key_flt(ePtr, "MASKVAL", fillValNoise, -6, "Value of Masked Pixels", &status) ||
+            fits_write_key_flt(ePtr, "EXTNAME", fillValNoise, -6, "RMS_IMAGE", &status))
             printError(status);
 
         if (outNShort)

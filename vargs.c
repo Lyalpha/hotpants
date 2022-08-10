@@ -96,6 +96,7 @@ void vargs(int argc, char *argv[]) {
     fillValNoise = D_FILLNOISE;
     inclNoiseImage = D_NOILAYER;
     inclSigmaImage = D_SIGLAYER;
+    inclMaskImage = D_MASKLAYER;
     inclConvImage = D_CONVLAYER;
     noClobber = D_NOCLOBBER;
     doKerInfo = D_KINFO;
@@ -193,6 +194,8 @@ void vargs(int argc, char *argv[]) {
     sprintf(help, "%s   [-nim]            : add noise image as layer to sub image (%d)\n", help, inclNoiseImage);
     sprintf(help, "%s   [-ndm]            : add noise-scaled sub image as layer to sub image (%d)\n\n", help,
             inclSigmaImage);
+    sprintf(help, "%s   [-mim]            : add mask image as layer to sub image (%d)\n\n", help,
+            inclMaskImage);
     sprintf(help, "%s   [-oci fitsfile]   : output convolved image (undef)\n", help);
     sprintf(help, "%s   [-cim]            : add convolved image as layer to sub image (%d)\n\n", help, inclConvImage);
 
@@ -356,6 +359,8 @@ void vargs(int argc, char *argv[]) {
                 inclNoiseImage = 1;
             } else if (strcasecmp(argv[iarg] + 1, "ndm") == 0) {
                 inclSigmaImage = 1;
+            } else if (strcasecmp(argv[iarg] + 1, "mim") == 0) {
+                inclMaskImage = 1;
             } else if (strcasecmp(argv[iarg] + 1, "oci") == 0) {
                 convImage = argv[++iarg];
             } else if (strcasecmp(argv[iarg] + 1, "cim") == 0) {

@@ -62,6 +62,7 @@
 #define D_FILLNOISE     0       /* value put on masked pixels in noise image */
 #define D_NOILAYER      0       /* add pure noise image as output image layer */
 #define D_SIGLAYER      0       /* add noise-scaled diff image as output image layer */
+#define D_MASKLAYER     0       /* add mask image as output image layer */
 #define D_CONVLAYER     0       /* add convolved image as output image layer */
 #define D_OUTSUM        0       /* output image is *SUM* of input images */
 #define D_NOCLOBBER     0       /* do not clobber output image - nice double negative */
