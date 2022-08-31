@@ -10,6 +10,7 @@ This fork is a multi-threaded version of the [original hotpants](https://github.
 Addiionally:
 * `-sconv` and `-gd` arguments have been removed. (So too has `-pca`, but this didn't work anyway.)
 * The `extractkern` module has been removed.
+* The `-mim` option can be used to ouput the mask as an HDU layer to the output difference file. 
 
 
 
@@ -105,6 +106,9 @@ Additional options:
    [-ond fitsfile]   : output noise scaled difference image (undef)
    [-nim]            : add noise image as layer to sub image (0)
    [-ndm]            : add noise-scaled sub image as layer to sub image (0)
+   
+   [-mim]            : add mask image as layer to sub image (0)
+
 
    [-oci fitsfile]   : output convolved image (undef)
    [-cim]            : add convolved image as layer to sub image (0)
